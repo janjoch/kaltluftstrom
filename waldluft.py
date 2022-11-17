@@ -21,12 +21,34 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
 
+"""
+data structures
+===============
+
+timeseries
+----------
+dict with each sensor
+DataFrame for each Sensor
+    index: timestamp (datetime.datetime)
+    cols: T (float) (/ RH (float))
+
+dateseries
+----------
+DataFrame
+    index: datetime.date
+    cols: multi-index:
+        0: sensor: W1, S1, W2, S2, W3, ...
+        1: key: 20-1, 27-1, ...
+        2: unit: T, count (of datapoints in timerange)
+"""
+
 class Timed:
 
     def __init__(
         self,
         directory,
         feedback=True,
+        encoding="ansi",
     ):
         """Initialize Waldluft."""
         self.timeseries = {}
@@ -51,6 +73,7 @@ class Timed:
                 self.timeseries[match[1]] = self._import_wtld_file(
                     directory,
                     match[0],
+                    encoding,
                 )
                 self.wtdl_str.append(match[1])
                 self.wtdl_int.append(int(match[2]))
@@ -83,11 +106,11 @@ class Timed:
             for sht in self.sht_str:
                 print("        " + sht + "  " + self.sht_sn[sht])
 
-    def _import_wtld_file(self, directory, filename):
+    def _import_wtld_file(self, directory, filename, encoding="ansi"):
         data = pd.read_csv(
             os.path.join(directory, filename),
             delimiter=";",
-            encoding="ansi",
+            encoding=encoding,
         )
         data.rename(columns={"Temperatur [°C]": "T"}, inplace=True)
         data["timestamp"] = data["Zeit [s]"].apply(self._parse_wtdl_datetime)
@@ -442,6 +465,7 @@ class Timed:
         n_bins=5,
         bounds=(None, None),
         average_alg="mean",
+        detailed_analysis=False,
     ):
         if(ref_sensors is None):
             ref_sensors = self.selection
@@ -454,6 +478,7 @@ class Timed:
             n_bins,
             bounds,
             average_alg,
+            detailed_analysis,
             self.wtdl_int,
             self.wtdl_str,
             self.sht_int,
@@ -462,149 +487,253 @@ class Timed:
             self.sht_sn,
         )
 
-    def binned_delta_deprecated(
+
+
+
+class Dated:
+
+    def __init__(
         self,
-        key_binned,
-        key_ref,
-        key_2,
-        ref_sensors=None,
+        timeseries,
+        frames={
+            "20-1": [20, 0, 1, 0],
+            "27-1": [27, 0, 1, 0],
+        },
+        frame_ref=None,
+        date_earliest=None,
+        date_latest=None,
+        ignore_dates=None,
+        average_alg="mean",
+        min_count=5,
+    ):
+        # init main dateseries DataFrame
+        self.dateseries = pd.DataFrame(
+            columns=pd.MultiIndex.from_tuples(
+                (),
+                names=('sensor', 'key', 'unit'),
+            )
+        )
+        self.bins = {}
+        # iterate through all timeframes
+        for key, time_shift in frames.items():
+            self._frame(
+                timeseries,
+                key,
+                time_shift,
+                date_earliest,
+                date_latest,
+                ignore_dates,
+                average_alg,
+                min_count,
+            )
+        if(frame_ref):
+            self.ref_key = "ref"
+            self._frame(
+                timeseries,
+                "ref",
+                frame_ref,
+                date_earliest,
+                date_latest,
+                ignore_dates,
+                average_alg,
+                min_count,
+            )
+        else:
+            self.ref_key = list(frames.keys())[0]
+            
+
+    def _frame(
+        self,
+        timeseries,
+        key,
+        time_shift,
+        date_earliest=None,
+        date_latest=None,
+        ignore_dates=None,
+        average_alg="mean",
+        min_count=5,
+    ):
+        timedelta_start = dt.timedelta(hours=time_shift[0], minutes=time_shift[1])
+        timedelta_width = dt.timedelta(hours=time_shift[2], minutes=time_shift[3])
+
+        # iterate every sensor
+        for sensor, timeserie in timeseries.items():
+            if(date_earliest is None):
+                date_earliest_sens = timeserie.index[0].date()
+                date_earliest_sens = dt.datetime(
+                    date_earliest_sens.year,
+                    date_earliest_sens.month,
+                    date_earliest_sens.day,
+                )
+            else:
+                date_earliest_sens = date_earliest
+
+            if(date_earliest is None):
+                date_latest_sens = timeserie.index[-1].date()
+                date_latest_sens = dt.datetime(
+                    date_latest_sens.year,
+                    date_latest_sens.month,
+                    date_latest_sens.day,
+                )
+            else:
+                date_latest_sens = date_latest
+
+            n_days = (date_latest_sens - date_earliest_sens).days + 1
+
+            # iterate every day
+            for day in range(n_days):
+                date = date_earliest_sens + dt.timedelta(days=day)
+                time_start = date + timedelta_start
+                time_stop = time_start + timedelta_width
+                filtered = timeserie[
+                     time_start.strftime('%Y-%m-%d %H:%M:%S.%f')
+                     : time_stop.strftime('%Y-%m-%d %H:%M:%S.%f')
+                ]
+
+                if(
+                    filtered.shape[0] >= min_count
+                    and (not ignore_dates or date not in ignore_dates)
+                ):
+                    if(average_alg == "mean"):
+                        self.dateseries.loc[date, (sensor, key, "T")] = filtered["T"].mean()
+                    elif(average_alg == "median"):
+                        self.dateseries.loc[date, (sensor, key, "T")] = filtered["T"].median()
+                    else:
+                        raise Exception("average_alg " + average_alg + " does not exist")
+                self.dateseries.loc[date, (sensor, key, "count")] = filtered.shape[0]
+
+    def assign_bins(
+        self,
+        ref_sensors,
+        key="default",
         n_bins=5,
-        bounds=(None, None),
+        bounds=None,
         average_alg="mean",
     ):
-        self.binned[key_binned] = {}
-
-        # determine ref_sensors
-        if(ref_sensors is None):
-            ref_sensors = self.selection
+        # format ref_sensors correctly
         if(
             not isinstance(ref_sensors, tuple)
             and not isinstance(ref_sensors, list)
         ):
             ref_sensors = (ref_sensors, )
-
-        # determine boundaries for bins based on ref_sensors
-        if(bounds is None or bounds[0] is None or bounds[1] is None):
-            bounds_iter = pd.DataFrame(index=ref_sensors, columns=("min", "max"))
-            for sensor in ref_sensors:
-                bounds_iter.loc[sensor] = (
-                    self.dateseries.loc[:, (sensor, key_ref, "T")].min(),
-                    self.dateseries.loc[:, (sensor, key_ref, "T")].max(),
-                )
-            if(bounds is None or (bounds[0] is None and bounds[1] is None)):
-                bounds = (
-                    bounds_iter["min"].min(),
-                    bounds_iter["max"].max(),
-                )
-            elif(bounds[0] is None):
-                bounds = (
-                    bounds_iter["min"].min(),
-                    bounds[1],
-                )
-            else:
-                bounds = (
-                    bounds[0],
-                    bounds_iter["max"].max(),
-                )
-
-        # derive edges of bins
-        self.binned[key_binned]["edges"] = np.linspace(*bounds, n_bins + 1)
+        ref_sensors = ref_sensors
+        self.bins[key] = {}
 
         # calculate daily reference temperatures based on ref_sensors
         if(average_alg == "mean"):
-            self.binned[key_binned]["ref_temps"] = self.dateseries.loc[
+            self.dateseries.loc[
                 :,
-                (ref_sensors, key_ref, "T"),
+                ("binning", key, "ref_T"),
+            ] = self.dateseries.loc[
+                :,
+                (ref_sensors, self.ref_key, "T"),
             ].droplevel(("key", "unit"), axis="columns").mean(axis=1)
         elif(average_alg == "median"):
-            self.binned[key_binned]["ref_temps"] = self.dateseries.loc[
+            self.dateseries.loc[
                 :,
-                (ref_sensors, key_ref, "T"),
+                ("binning", key, "ref_T"),
+            ] = self.dateseries.loc[
+                :,
+                (ref_sensors, self.ref_key, "T"),
             ].droplevel(("key", "unit"), axis="columns").median(axis=1)
 
-        # calculate temperature drops for every sensor and every day
-        self.binned[key_binned]["t_drop"] = (
+        # assign bin
+        if(bounds):
+            bounds = np.linspace(bounds[0], bounds[1], n_bins)
+        else:
+            bounds = n_bins
+        self.dateseries.loc[
+            :,
+            ("binning", key, "bin_nr"),
+        ], self.bins[key] = pd.cut(
             self.dateseries.loc[
+                :,
+                ("binning", key, "ref_T"),
+            ],
+            bounds,
+            labels=False,
+            retbins=True,
+        )
+
+        
+        """
+        # calculate temperature drops for every sensor and every day
+        self.t_drop = (
+            dateseries.loc[
                 :,
                 (slice(None), key_ref, "T"),
             ].droplevel(("key", "unit"), axis="columns")
-            - self.dateseries.loc[
+            - dateseries.loc[
                 :,
                 (slice(None), key_2, "T"),
             ].droplevel(("key", "unit"), axis="columns")
         )
 
         # bin temperature drop for every sensor
-        self.binned[key_binned]["hist"] = pd.DataFrame(
+        self.binned_data = pd.DataFrame(
             columns=pd.MultiIndex.from_tuples(
                 (),
                 names=('sensor', 'value'),
             ),
             index=range(n_bins),
         )
-        for sensor, _ in self.binned[key_binned]["t_drop"].iloc[0].iteritems():
-            self.binned[key_binned]["hist"].loc[
+        for sensor, _ in self.t_drop.iloc[0].items():
+            self.binned_data.loc[
                 :,
                 (sensor, "t_drop_sum"),
             ] = np.zeros(n_bins)
-            self.binned[key_binned]["hist"].loc[
+            self.binned_data.loc[
                 :,
                 (sensor, "count"),
             ] = np.zeros(n_bins)
-            self.binned[key_binned]["hist"].loc[
+            self.binned_data.loc[
                 :,
                 (sensor, "t_drop_avg"),
             ] = np.zeros(n_bins)
-        for day, ref_temp in self.binned[key_binned]["ref_temps"].iteritems():
-            bin_ = np.digitize(ref_temp, self.binned[key_binned]["edges"]) - 1
+        for day, ref_temp in self.ref_temps.items():
+            bin_ = np.digitize(ref_temp, self.edges) - 1
             if(bin_ >= n_bins):
                 continue
-            for sensor, t_drop in self.binned[key_binned]["t_drop"].loc[day].iteritems():
+            for sensor, t_drop in self.t_drop.loc[day].items():
                 if(pd.isnull(t_drop)):
                     continue
-                self.binned[key_binned]["hist"].loc[
+                self.binned_data.loc[
                     bin_,
                     (sensor, "t_drop_sum"),
-                ] = self.binned[key_binned]["hist"].loc[
+                ] = self.binned_data.loc[
                     bin_,
                     (sensor, "t_drop_sum"),
                 ] + t_drop
-                self.binned[key_binned]["hist"].loc[
+                self.binned_data.loc[
                     bin_,
                     (sensor, "count"),
-                ] = self.binned[key_binned]["hist"].loc[
+                ] = self.binned_data.loc[
                     bin_,
                     (sensor, "count"),
                 ] + 1
-        for sensor, df in self.binned[key_binned]["hist"].groupby(level=0, axis=1):
+        for sensor, df in self.binned_data.groupby(level=0, axis=1):
             df = df.droplevel(
                 "sensor",
                 axis="columns",
             )
-            self.binned[key_binned]["hist"].loc[
+            self.binned_data.loc[
                 :,
                 (sensor, "t_drop_avg"),
             ] = df["t_drop_sum"] / df["count"]
-        """
-        self.binned[key_binned]["hist"].loc[
+        self.binned = self.binned_data.loc[
             :,
-            (slice(None), "t_avg"),
-        ] = self.binned[key_binned]["hist"].loc[
-            :,
-            (slice(None), "t_drop_sum"),
+            (slice(None), "t_drop_avg"),
         ].droplevel(
-            ("value"),
-            axis="columns",
-        ) / self.binned[key_binned]["hist"].loc[
-            :,
-            (slice(None), "count"),
-        ].droplevel(
-            ("value"),
+            "value",
             axis="columns",
         )
         """
 
-            
+
+        
+
+
+
 class Binned:
     
     def __init__(
@@ -616,6 +745,7 @@ class Binned:
         n_bins,
         bounds,
         average_alg,
+        detailed_analysis,
         wtdl_int,
         wtdl_str,
         sht_int,
@@ -698,7 +828,7 @@ class Binned:
             ),
             index=range(n_bins),
         )
-        for sensor, _ in self.t_drop.iloc[0].iteritems():
+        for sensor, _ in self.t_drop.iloc[0].items():
             self.binned_data.loc[
                 :,
                 (sensor, "t_drop_sum"),
@@ -711,11 +841,11 @@ class Binned:
                 :,
                 (sensor, "t_drop_avg"),
             ] = np.zeros(n_bins)
-        for day, ref_temp in self.ref_temps.iteritems():
+        for day, ref_temp in self.ref_temps.items():
             bin_ = np.digitize(ref_temp, self.edges) - 1
             if(bin_ >= n_bins):
                 continue
-            for sensor, t_drop in self.t_drop.loc[day].iteritems():
+            for sensor, t_drop in self.t_drop.loc[day].items():
                 if(pd.isnull(t_drop)):
                     continue
                 self.binned_data.loc[
@@ -791,7 +921,7 @@ class Binned:
         fig_legend_loc="upper right",
         xlim=None,
         ylim=None,
-        title="Standordabhängiger Temperaturabfall nach Tages-Referenztemperatur",
+        title="Standortabhängiger Temperaturabfall nach Tages-Referenztemperatur",
         xlabel="Referenztemperatur / °C",
         ylabel="Temperaturabfall / °C",
         file_export=False,
