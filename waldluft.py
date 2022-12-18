@@ -249,6 +249,7 @@ class Timed:
         file_export_name="auto",
         file_export_type="pdf",
         show_plot=True,
+        annot_func=None,
     ):
         selection = self._sensor_selection(
             sensor_type,
@@ -275,6 +276,9 @@ class Timed:
         plt.title(title)
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
+        
+        if(annot_func is not None):
+            fig, ax = annot_func(fig, ax)
 
         plt.tight_layout(pad=1.5)
 
@@ -295,13 +299,23 @@ class Timed:
                     .replace("/", "-")
                     .replace("\\", "-")
                 )
+
+            if(
+                isinstance(file_export_type, tuple)
+                or isinstance(file_export_type, list)
+            ):
+                file_export_types = file_export_type
+            else:
+                file_export_types = (file_export_type, )
+
+            for file_export_type in file_export_types:
                 
-            img_path = os.path.join(
-                file_export_path,
-                file_export_name + "." + file_export_type,
-            )
-            plt.savefig(img_path, face_color="white", bbox_inches="tight")
-            print("image was saved at", img_path)
+                img_path = os.path.join(
+                    file_export_path,
+                    file_export_name + "." + file_export_type,
+                )
+                plt.savefig(img_path, bbox_inches="tight")
+                print("image was saved at", img_path)
 
         if(show_plot):
             plt.show()
