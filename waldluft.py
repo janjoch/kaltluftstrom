@@ -298,6 +298,7 @@ class Timed:
                     .replace(",", "")
                     .replace("/", "-")
                     .replace("\\", "-")
+                    .replace("\n", "_")
                 )
 
             if(
