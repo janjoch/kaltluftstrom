@@ -68,7 +68,7 @@ class Timed:
         for obj in objs:
 
             # import WTDL sensor data
-            match = re.match("^(W([0-9]))+\.csv$", obj.name)
+            match = re.match("^(W([0-9]+))[A-Za-z0-9_-]*\.csv$", obj.name)
             if(match):
                 self.timeseries[match[1]] = self._import_wtld_file(
                     directory,
@@ -79,7 +79,7 @@ class Timed:
                 self.wtdl_int.append(int(match[2]))
 
             # import SHT sensor data
-            match = re.match("^(S([0-9]))+\.edf$", obj.name)
+            match = re.match("^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", obj.name)
             if(match):
                 self.timeseries[match[1]] = self._import_sht_file(
                     directory,
@@ -92,10 +92,10 @@ class Timed:
         # create single timeseries df
         for sensor in self.timeseries:
             self.timeseries[sensor]["T"].name = sensor
-        self.timeseries_ = pd.concat(
-            [self.timeseries[sensor]["T"] for sensor in self.timeseries],
-            axis=1,
-        )
+        #self.timeseries_ = pd.concat(
+        #    [self.timeseries[sensor]["T"] for sensor in self.timeseries],
+        #    axis=1,
+        #)
 
         if(feedback):
             print("Successfully imported the following sensor data:")
