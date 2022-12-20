@@ -30,7 +30,7 @@ timeseries
 dict with each sensor
 DataFrame for each Sensor
     index: timestamp (datetime.datetime)
-    cols: T (float) (/ RH (float))
+    cols: T (float) (/ RH (float))
 
 dateseries
 ----------
@@ -244,6 +244,7 @@ class Timed:
         title=None,
         xlabel="Datum/Zeit (MESZ)",
         ylabel="Temperatur / °C",
+        sensor_labels={},
         file_export=False,
         file_export_path="",
         file_export_name="auto",
@@ -265,7 +266,7 @@ class Timed:
             ax.plot(
                 self.timeseries[sensor].index,
                 self.timeseries[sensor]["T"],
-                label=sensor,
+                label=sensor_labels.get(sensor, sensor),
                 ms=None,
             )
         
@@ -296,6 +297,7 @@ class Timed:
                     .replace("(", "")
                     .replace(")", "")
                     .replace(",", "")
+                    .replace(":", "")
                     .replace("/", "-")
                     .replace("\\", "-")
                     .replace("\n", "_")
@@ -324,16 +326,17 @@ class Timed:
 
     def plot_temp_time_interactive(
         self,
-        *args,
+        *sensors,
         title=None,
         xlabel="Datum/Zeit (MESZ)",
         ylabel="Temperatur / °C",
+        sensor_labels={},
         mode='lines',
         plot_all=False,
     ):
-        if(len(args)==0):
+        if(len(sensors)==0):
             if(plot_all):
-                args = self._sensor_selection()
+                sensors = self._sensor_selection()
             else:
                 raise Exception(
                     "To avoid overload, "
@@ -341,22 +344,24 @@ class Timed:
                     "with plot_all=True"
                 )
         fig = px.line(
-            self.timeseries[args[0]]["T"].dropna(),
+            #self.timeseries[args[0]]["T"].dropna(),
             title=title,
             labels={
                 "timestamp": xlabel,
                 "value": ylabel,
                 "sensor": "Sensor",
                 "variable": "Sensor",
-            }
+            },
+            #name=sensor_labels.get(args[0], args[0]),
         )
-        for arg in args[1:]:
+        #for sensor in args[1:]:
+        for sensor in sensors:
             fig.add_trace(
                 go.Scatter(
-                    x=self.timeseries[arg]["T"].dropna().index,
-                    y=self.timeseries[arg]["T"].dropna(),
+                    x=self.timeseries[sensor]["T"].dropna().index,
+                    y=self.timeseries[sensor]["T"].dropna(),
                     mode=mode,
-                    name=arg,
+                    name=sensor_labels.get(sensor, sensor),
                 )
             )
         fig.show()
