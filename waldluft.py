@@ -1,16 +1,21 @@
 # -*- coding: utf-8 -*-
+################################################################################
 """
-@author: joerja
+@author: Janosch Joerg, mail@janjo.ch
 
-V0.2.0
+V0.3.0
 
-220821
+221223
+
 """
+################################################################################
 
 import os
 import re
+import types
 import datetime as dt
 import functools as ft
+from pathlib import Path
 
 import numpy as np
 
@@ -42,15 +47,91 @@ DataFrame
         2: unit: T, count (of datapoints in timerange)
 """
 
-class Timed:
+class Base:
+
+    def __init__(self):
+        pass
+
+    def _export_plot(
+        self,
+        fig,
+        ax,
+        file_export_name,
+        file_export_path,
+        file_export_type,
+        title,
+        selection,
+        fig_size,
+    ):
+        """
+        Export a matplotlib.pyplot plot.
+
+        Parameters
+        ----------
+        fig, ax: matplotlib.pyplot fig and ax objects
+        file_export_name: str
+        file_export_path: str or posix path
+        file_export_type: str or tuple of strs
+        """
+        if str(file_export_name) == "auto":
+            file_export_name = str(title) + "_"
+            file_export_name += "".join(selection)
+            file_export_name += (
+                "_size-"
+                + str(fig_size[0])
+                + "-" + str(fig_size[1])
+            )
+            file_export_name = (
+                file_export_name.replace(" ", "_")
+                .replace("(", "")
+                .replace(")", "")
+                .replace(",", "")
+                .replace(":", "")
+                .replace("/", "-")
+                .replace("\\", "-")
+                .replace("\n", "_")
+            )
+
+        if(
+            isinstance(file_export_type, tuple)
+            or isinstance(file_export_type, list)
+        ):
+            file_export_types = file_export_type
+        else:
+            file_export_types = (file_export_type, )
+
+        for file_export_type in file_export_types:
+            
+            img_path = (
+                Path(file_export_path)
+                / (file_export_name + "." + file_export_type))
+            plt.savefig(img_path, bbox_inches="tight")
+            print("image was saved at", img_path)
+
+        return fig, ax
+
+
+class Timed(Base):
 
     def __init__(
         self,
         directory,
         feedback=True,
+        sensor_labels=types.MappingProxyType({}),
         encoding="ansi",
     ):
-        """Initialize Waldluft."""
+        """
+        Imports all files from a directory.
+
+        Parameters
+        ----------
+        directory: str or posix path object
+        feedback: bool, optional
+            Mute feedback about imported data.
+        encoding: str, optional
+            File encoding of WTDL .csv files.
+        """
+        self.sensor_labels = sensor_labels
         self.timeseries = {}
         self.dateseries = pd.DataFrame(
             columns=pd.MultiIndex.from_tuples(
@@ -64,11 +145,11 @@ class Timed:
         self.sht_str = []
         self.sht_metadata = {}
         self.sht_sn = {}
-        objs = os.scandir(directory)
-        for obj in objs:
+        directory = Path(directory)
+        for fn in directory.iterdir():
 
             # import WTDL sensor data
-            match = re.match("^(W([0-9]+))[A-Za-z0-9_-]*\.csv$", obj.name)
+            match = re.match("^(W([0-9]+))[A-Za-z0-9_-]*\.csv$", fn.name)
             if(match):
                 self.timeseries[match[1]] = self._import_wtld_file(
                     directory,
@@ -79,7 +160,7 @@ class Timed:
                 self.wtdl_int.append(int(match[2]))
 
             # import SHT sensor data
-            match = re.match("^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", obj.name)
+            match = re.match("^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", fn.name)
             if(match):
                 self.timeseries[match[1]] = self._import_sht_file(
                     directory,
@@ -92,10 +173,6 @@ class Timed:
         # create single timeseries df
         for sensor in self.timeseries:
             self.timeseries[sensor]["T"].name = sensor
-        #self.timeseries_ = pd.concat(
-        #    [self.timeseries[sensor]["T"] for sensor in self.timeseries],
-        #    axis=1,
-        #)
 
         if(feedback):
             print("Successfully imported the following sensor data:")
@@ -108,7 +185,7 @@ class Timed:
 
     def _import_wtld_file(self, directory, filename, encoding="ansi"):
         data = pd.read_csv(
-            os.path.join(directory, filename),
+            directory / filename,
             delimiter=";",
             encoding=encoding,
         )
@@ -119,7 +196,7 @@ class Timed:
 
     def _import_sht_file(self, directory, filename, sensor_code):
         data = pd.read_csv(
-            os.path.join(directory, filename),
+            directory / filename,
             header=9,
             delimiter="\t",
             encoding="UTF-8",
@@ -132,7 +209,7 @@ class Timed:
             self._parse_sht_datetime,
         )
         data.set_index("timestamp", inplace=True)
-        with open(os.path.join(directory, filename)) as f:
+        with open(directory / filename) as f:
             self.sht_metadata[sensor_code] = {}
             for i in range(8):
                 line = f.readline()
@@ -215,6 +292,7 @@ class Timed:
                     )
                 ):
                     selection.append("W" + str(sensor))
+
             for sensor in self.sht_int:
                 if(
                     (sensor_type is None or sensor_type=="sht")
@@ -225,11 +303,10 @@ class Timed:
                 ):
                     selection.append("S" + str(sensor))
 
+            return selection
+
         else:
             return sensor_manual
-
-        return selection
-        
 
     def plot_temp_time(
         self,
@@ -244,7 +321,6 @@ class Timed:
         title=None,
         xlabel="Datum/Zeit (MESZ)",
         ylabel="Temperatur / °C",
-        sensor_labels={},
         file_export=False,
         file_export_path="",
         file_export_name="auto",
@@ -258,71 +334,44 @@ class Timed:
             sensor_manual,
         )
         fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
-        ax = fig.subplots()
-        
         fig.set_facecolor("white")
-        
+        ax = fig.subplots()
+
         for sensor in selection:
             ax.plot(
                 self.timeseries[sensor].index,
                 self.timeseries[sensor]["T"],
-                label=sensor_labels.get(sensor, sensor),
+                label=self.sensor_labels.get(sensor, sensor),
                 ms=None,
             )
-        
-        plt.xlim(xlim)
-        plt.ylim(ylim)
-        
-        plt.legend(loc=fig_legend_loc)
-        plt.title(title)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
-        
+
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        ax.legend(loc=fig_legend_loc)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
         if(annot_func is not None):
             fig, ax = annot_func(fig, ax)
 
         plt.tight_layout(pad=1.5)
 
         if(file_export):
-            if str(file_export_name) == "auto":
-                file_export_name = title + "_"
-                file_export_name += "".join(selection)
-                file_export_name += (
-                    "_size-"
-                    + str(fig_size[0])
-                    + "-" + str(fig_size[1])
-                )
-                file_export_name = (
-                    file_export_name.replace(" ", "_")
-                    .replace("(", "")
-                    .replace(")", "")
-                    .replace(",", "")
-                    .replace(":", "")
-                    .replace("/", "-")
-                    .replace("\\", "-")
-                    .replace("\n", "_")
-                )
-
-            if(
-                isinstance(file_export_type, tuple)
-                or isinstance(file_export_type, list)
-            ):
-                file_export_types = file_export_type
-            else:
-                file_export_types = (file_export_type, )
-
-            for file_export_type in file_export_types:
-                
-                img_path = os.path.join(
-                    file_export_path,
-                    file_export_name + "." + file_export_type,
-                )
-                plt.savefig(img_path, bbox_inches="tight")
-                print("image was saved at", img_path)
+            fig, ax = self._export_plot(
+                fig,
+                ax,
+                file_export_name,
+                file_export_path,
+                file_export_type,
+                title,
+                selection,
+                fig_size,
+            )
 
         if(show_plot):
             plt.show()
-
 
     def plot_temp_time_interactive(
         self,
@@ -330,7 +379,6 @@ class Timed:
         title=None,
         xlabel="Datum/Zeit (MESZ)",
         ylabel="Temperatur / °C",
-        sensor_labels={},
         mode='lines',
         plot_all=False,
     ):
@@ -361,11 +409,10 @@ class Timed:
                     x=self.timeseries[sensor]["T"].dropna().index,
                     y=self.timeseries[sensor]["T"].dropna(),
                     mode=mode,
-                    name=sensor_labels.get(sensor, sensor),
+                    name=self.sensor_labels.get(sensor, sensor),
                 )
             )
         fig.show()
-
 
     def extract_dateseries(
         self,
@@ -473,7 +520,7 @@ class Timed:
                 "variable": "Sensor",
             },
             title=title,
-       )
+        )
         fig.show()
 
     def binned_delta(
@@ -516,7 +563,7 @@ class Dated:
         self,
         timeseries,
         frames={
-            "20-1": [20, 0, 1, 0],
+            "21-1": [21, 0, 1, 0],
             "27-1": [27, 0, 1, 0],
         },
         frame_ref=None,
@@ -526,6 +573,32 @@ class Dated:
         average_alg="mean",
         min_count=5,
     ):
+        """
+        Extract average temps of given time frames for each sensor
+        and each day.
+
+        Parameters
+        ----------
+        timeseries: Timed.timeseries dict->pd.Dataframe
+        frames: dict->list, optional
+            Define time frames to extract daily temperatures.
+            Format:
+                - dict key: name of frame
+                - dict content: list with 4 elements:
+                    [hours_start, mins_start, hours_delta, mins_delta]
+        frame_ref: list, optional
+            Define reference timeframe.
+            Format identical entry in frames.
+            If undefined, the first frame will be used.
+        date_earliest, date_latest: dt.datetime, optional
+            First and last date to include in further processing.
+        ignore_dates: list->dt.datetime, optional
+            Dates to skip in further processing.
+        average_alg: str, optional
+            Average algorithm to use:
+                - mean
+                - median
+        """
         # init main dateseries DataFrame
         self.dateseries = pd.DataFrame(
             columns=pd.MultiIndex.from_tuples(
@@ -534,6 +607,9 @@ class Dated:
             )
         )
         self.bins = {}
+        self.binned = {}
+        self.average_alg = average_alg
+
         # iterate through all timeframes
         for key, time_shift in frames.items():
             self._frame(
@@ -560,7 +636,6 @@ class Dated:
             )
         else:
             self.ref_key = list(frames.keys())[0]
-            
 
     def _frame(
         self,
@@ -570,11 +645,35 @@ class Dated:
         date_earliest=None,
         date_latest=None,
         ignore_dates=None,
-        average_alg="mean",
         min_count=5,
     ):
-        timedelta_start = dt.timedelta(hours=time_shift[0], minutes=time_shift[1])
-        timedelta_width = dt.timedelta(hours=time_shift[2], minutes=time_shift[3])
+        """
+        Read out a given time frame each day and for every sensor.
+        Saves data under key in self.dateseries.
+
+        Parameters
+        ----------
+        timeseries: Timed.timeseries dict->pd.Dataframe
+        key: str
+        time_shift: list of 4 elements
+            [hours_start, mins_start, hours_delta, mins_delta]
+        date_earliest, date_latest: dt.datetime, optional
+            First and last date to include in further processing.
+        ignore_dates: list->dt.datetime, optional
+            Dates to skip in further processing.
+        min_count: int, optional
+            Minimum temperature readings required in given timeframe.
+            Otherwise, value won't be computed, resulting in the day not 
+            showing up or a pd.nan.
+        """
+        timedelta_start = dt.timedelta(
+            hours=time_shift[0],
+            minutes=time_shift[1],
+        )
+        timedelta_width = dt.timedelta(
+            hours=time_shift[2],
+            minutes=time_shift[3],
+        )
 
         # iterate every sensor
         for sensor, timeserie in timeseries.items():
@@ -614,22 +713,51 @@ class Dated:
                     filtered.shape[0] >= min_count
                     and (not ignore_dates or date not in ignore_dates)
                 ):
-                    if(average_alg == "mean"):
-                        self.dateseries.loc[date, (sensor, key, "T")] = filtered["T"].mean()
-                    elif(average_alg == "median"):
-                        self.dateseries.loc[date, (sensor, key, "T")] = filtered["T"].median()
+                    if(self.average_alg == "mean"):
+                        self.dateseries.loc[
+                            date,
+                            (sensor, key, "T"),
+                        ] = filtered["T"].mean()
+                    elif(self.average_alg == "median"):
+                        self.dateseries.loc[
+                            date,
+                            (sensor, key, "T"),
+                        ] = filtered["T"].median()
                     else:
-                        raise Exception("average_alg " + average_alg + " does not exist")
-                self.dateseries.loc[date, (sensor, key, "count")] = filtered.shape[0]
+                        raise Exception(
+                            "average_alg "
+                            + self.average_alg
+                            + " does not exist"
+                        )
+                self.dateseries.loc[
+                    date,
+                    (sensor, key, "count"),
+                ] = filtered.shape[0]
 
     def assign_bins(
         self,
         ref_sensors,
         key="default",
-        n_bins=5,
+        bins=5,
         bounds=None,
         average_alg="mean",
     ):
+        """
+        Compute daily reference temperatures 
+        and assign each day to a bin based on ref temps.
+
+        Method will add a new col to self.dateseries containing the bin info.
+
+        Parameters
+        ----------
+        ref_sensors: list
+            Reference sensors to use.
+        key: str, optional
+            Key to save reference frames.
+        bins: int, optional
+            Number of bins.
+        
+        """
         # format ref_sensors correctly
         if(
             not isinstance(ref_sensors, tuple)
@@ -640,7 +768,7 @@ class Dated:
         self.bins[key] = {}
 
         # calculate daily reference temperatures based on ref_sensors
-        if(average_alg == "mean"):
+        if(self.average_alg == "mean"):
             self.dateseries.loc[
                 :,
                 ("binning", key, "ref_T"),
@@ -648,7 +776,7 @@ class Dated:
                 :,
                 (ref_sensors, self.ref_key, "T"),
             ].droplevel(("key", "unit"), axis="columns").mean(axis=1)
-        elif(average_alg == "median"):
+        elif(self.average_alg == "median"):
             self.dateseries.loc[
                 :,
                 ("binning", key, "ref_T"),
@@ -658,10 +786,6 @@ class Dated:
             ].droplevel(("key", "unit"), axis="columns").median(axis=1)
 
         # assign bin
-        if(bounds):
-            bounds = np.linspace(bounds[0], bounds[1], n_bins)
-        else:
-            bounds = n_bins
         self.dateseries.loc[
             :,
             ("binning", key, "bin_nr"),
@@ -670,12 +794,91 @@ class Dated:
                 :,
                 ("binning", key, "ref_T"),
             ],
-            bounds,
+            bins,
             labels=False,
             retbins=True,
         )
 
+
+
+    def __plot_t_drop(
+        self,
+        sensor_type=None,
+        sensor_locations=None,
+        sensor_manual=None,
+        fig_size=(10,6),
+        fig_dpi=140,
+        fig_legend_loc="upper right",
+        xlim=None,
+        ylim=None,
+        title="Standortabhängiger Temperaturabfall \
+            nach Tages-Referenztemperatur",
+        xlabel="Referenztemperatur / °C",
+        ylabel="Temperaturabfall / °C",
+        file_export=False,
+        file_export_path="",
+        file_export_name="auto",
+        file_export_type="pdf",
+        show_plot=True,
+    ):
+        selection = self._sensor_selection(
+            sensor_type,
+            sensor_locations,
+            sensor_manual,
+        )
+        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
+        fig.set_facecolor("white")
+        ax = fig.subplots()
+
+        for sensor in selection:
+            ax.plot(
+                (self.edges[1:] + self.edges[:-1]) / 2,
+                self.binned[sensor],
+                label=sensor,
+                ms=None,
+            )
+
+        plt.xlim(xlim)
+        plt.ylim(ylim)
         
+        plt.legend(loc=fig_legend_loc)
+        plt.title(title)
+        plt.xlabel(xlabel)
+        plt.ylabel(ylabel)
+
+        plt.tight_layout(pad=1.5)
+
+        if(file_export):
+            fig, ax = self._export_plot(
+                fig,
+                ax,
+                file_export_name,
+                file_export_path,
+                file_export_type,
+                title,
+                selection,
+                fig_size,
+            )
+
+        if(show_plot):
+            plt.show()
+
+
+
+
+
+
+
+################################################################################
+################################################################################
+################## DEPTECATED CODE BELOW #######################################
+################################################################################
+################################################################################
+
+
+
+
+
         """
         # calculate temperature drops for every sensor and every day
         self.t_drop = (
