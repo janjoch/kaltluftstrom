@@ -26,6 +26,8 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
 
+import scipy as sp
+
 """
 data structures
 ===============
@@ -50,6 +52,9 @@ DataFrame
 class Base:
 
     def __init__(self):
+        """
+        Global support methods for the waldluft project.
+        """
         pass
 
     def _export_plot(
@@ -109,6 +114,39 @@ class Base:
             print("image was saved at", img_path)
 
         return fig, ax
+
+    def _sensor_selection(
+        self,
+        sensor_type=None,
+        sensor_locations=None,
+        sensor_manual=None,
+    ):
+        if(sensor_manual is None):
+            selection = []
+            for sensor in self.wtdl_int:
+                if(
+                    (sensor_type is None or sensor_type=="wtdl")
+                    and (
+                        sensor_locations is None
+                        or sensor in sensor_locations
+                    )
+                ):
+                    selection.append("W" + str(sensor))
+
+            for sensor in self.sht_int:
+                if(
+                    (sensor_type is None or sensor_type=="sht")
+                    and (
+                        sensor_locations is None
+                        or sensor in sensor_locations
+                    )
+                ):
+                    selection.append("S" + str(sensor))
+
+            return selection
+
+        else:
+            return sensor_manual
 
 
 class Timed(Base):
@@ -274,39 +312,6 @@ class Timed(Base):
         if(drop_ms):
             ints[6] = 0
         return dt.datetime(*ints)
-
-    def _sensor_selection(
-        self,
-        sensor_type=None,
-        sensor_locations=None,
-        sensor_manual=None,
-    ):
-        if(sensor_manual is None):
-            selection = []
-            for sensor in self.wtdl_int:
-                if(
-                    (sensor_type is None or sensor_type=="wtdl")
-                    and (
-                        sensor_locations is None
-                        or sensor in sensor_locations
-                    )
-                ):
-                    selection.append("W" + str(sensor))
-
-            for sensor in self.sht_int:
-                if(
-                    (sensor_type is None or sensor_type=="sht")
-                    and (
-                        sensor_locations is None
-                        or sensor in sensor_locations
-                    )
-                ):
-                    selection.append("S" + str(sensor))
-
-            return selection
-
-        else:
-            return sensor_manual
 
     def plot_temp_time(
         self,
@@ -485,7 +490,7 @@ class Timed(Base):
                     else:
                         raise Exception("average_alg " + average_alg + " does not exist")
                 self.dateseries.loc[date, (sensor, key, "count")] = filtered.shape[0]
-                
+
     def plot_dateseries_interactive(
         self,
         sensor_type=None,
@@ -557,7 +562,7 @@ class Timed(Base):
 
 
 
-class Dated:
+class Dated(Base):
 
     def __init__(
         self,
@@ -574,7 +579,7 @@ class Dated:
         min_count=5,
     ):
         """
-        Extract average temps of given time frames for each sensor
+        Extract average temperatures of given time frames for each sensor
         and each day.
 
         Parameters
@@ -637,6 +642,8 @@ class Dated:
         else:
             self.ref_key = list(frames.keys())[0]
 
+        self.dateseries.sort_index(inplace=True, axis=1)
+
     def _frame(
         self,
         timeseries,
@@ -645,6 +652,7 @@ class Dated:
         date_earliest=None,
         date_latest=None,
         ignore_dates=None,
+        average_alg="mean",
         min_count=5,
     ):
         """
@@ -799,27 +807,29 @@ class Dated:
             retbins=True,
         )
 
-
-
-    def __plot_t_drop(
+    def plot_t_drop(
         self,
         sensor_type=None,
         sensor_locations=None,
         sensor_manual=None,
+        bin_key="default",
+        frames=("21-1", "27-1",),
+        boxplot=True,
+        boxplot_and_line=False,
         fig_size=(10,6),
         fig_dpi=140,
         fig_legend_loc="upper right",
         xlim=None,
         ylim=None,
-        title="Standortabhängiger Temperaturabfall \
-            nach Tages-Referenztemperatur",
-        xlabel="Referenztemperatur / °C",
+        title=None,
+        xlabel="Tages-Referenztemperatur / °C",
         ylabel="Temperaturabfall / °C",
         file_export=False,
         file_export_path="",
         file_export_name="auto",
         file_export_type="pdf",
         show_plot=True,
+        annot_func=None,
     ):
         selection = self._sensor_selection(
             sensor_type,
@@ -830,21 +840,73 @@ class Dated:
         fig.set_facecolor("white")
         ax = fig.subplots()
 
-        for sensor in selection:
-            ax.plot(
-                (self.edges[1:] + self.edges[:-1]) / 2,
-                self.binned[sensor],
-                label=sensor,
-                ms=None,
-            )
+        # compute data
+        y = []
+        x = []
+        n = []
+        for i in range(len(self.bins[bin_key]) - 1):
+            subset = self.dateseries[self.dateseries[("binning", bin_key, "bin_nr")] == i].loc[:, (selection, )]
 
-        plt.xlim(xlim)
-        plt.ylim(ylim)
-        
-        plt.legend(loc=fig_legend_loc)
-        plt.title(title)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
+            # delta
+            if(isinstance(frames, tuple) or isinstance(frames, list)):
+                sub_1 = subset.loc[
+                    :,
+                    (slice(None), frames[0], "T"),
+                ].droplevel((1,2,), axis=1)
+                sub_2 = subset.loc[
+                    :,
+                    (slice(None), frames[1], "T"),
+                ].droplevel((1,2,), axis=1)
+                y.append((sub_1 - sub_2).mean(axis=1))
+
+            # absolute value
+            else:
+                y.append(subset.loc[
+                    :,
+                    (slice(None), frames, "T"),
+                ].droplevel((1,2,), axis=1).mean(axis=1))
+
+            x.append(i)
+            n.append(len(subset))
+
+        # boxplot (complex)
+        if(boxplot or boxplot_and_line):
+            ax.boxplot(y, labels=x)
+            ax.xaxis.set_tick_params(which='minor', bottom=False)
+
+        # regular line plot (simple)
+        if(not boxplot or boxplot_and_line):
+            y = [e.median() for e in y]
+            if(boxplot_and_line):
+                ax.plot(np.array(x) + 1, y)
+            else:
+                x = (self.bins[bin_key][:-1] + self.bins[bin_key][1:]) / 2
+                ax.plot(x, y, "x-")
+
+        # rewrite x axis labels
+        if(boxplot or boxplot_and_line):
+            ax.set_xticklabels([
+                "{:.1f}\n({:.1f} - {:.1f})\n(n={})".format(
+                    (self.bins[bin_key][i] + self.bins[bin_key][i + 1]) / 2,
+                    self.bins[bin_key][i],
+                    self.bins[bin_key][i + 1],
+                    n[i],
+                )
+                for i
+                in range(len(self.bins[bin_key]) - 1)
+            ])
+
+        # format plot
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        #ax.legend(loc=fig_legend_loc)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        if(annot_func is not None):
+            fig, ax = annot_func(fig, ax)
 
         plt.tight_layout(pad=1.5)
 
@@ -863,9 +925,158 @@ class Dated:
         if(show_plot):
             plt.show()
 
+    def plot_scatter(
+        self,
+        sensor_type=None,
+        sensor_locations=None,
+        sensor_manual=None,
+        bin_key="default",
+        frames=("21-1", "27-1",),
+        confidence_interval=True,
+        fig_size=(10,6),
+        fig_dpi=140,
+        fig_legend_loc="upper right",
+        xlim=None,
+        ylim=None,
+        title=None,
+        xlabel="Tages-Referenztemperatur / °C",
+        ylabel="Temperaturabfall / °C",
+        file_export=False,
+        file_export_path="",
+        file_export_name="auto",
+        file_export_type="pdf",
+        show_plot=True,
+        annot_func=None,
+    ):
+        selection = self._sensor_selection(
+            sensor_type,
+            sensor_locations,
+            sensor_manual,
+        )
+        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
+        fig.set_facecolor("white")
+        ax = fig.subplots()
+
+        # compute data
+        # delta
+        if(isinstance(frames, tuple) or isinstance(frames, list)):
+            sub_1 = self.dateseries.loc[
+                :,
+                (selection, frames[0], "T"),
+            ].droplevel((1,2,), axis=1)
+            sub_2 = self.dateseries.loc[
+                :,
+                (selection, frames[1], "T"),
+            ].droplevel((1,2,), axis=1)
+            y = (sub_1 - sub_2).mean(axis=1)
+
+        # absolute value
+        else:
+            y = self.dateseries.loc[
+                :,
+                (selection, frames, "T"),
+            ].droplevel((1,2,), axis=1).mean(axis=1)
+
+        x = self.dateseries[("binning", bin_key, "ref_T")]
+
+        # clean nan values
+        cleaned = ~pd.DataFrame({"x": x.isnull(), "y": y.isnull()}).any(axis=1)
+        x = x.loc[cleaned]
+        y = y.loc[cleaned]
+
+        # scatter plot
+        ax.scatter(x, y, zorder=10)
+
+        # confidence interval
+        if(confidence_interval):
+            p, cov = np.polyfit(x, y, 1, cov=True)  # parameters and covariance from of the fit of 1-D polynom.
+            y_model = equation(p, x)                # model using the fit parameters; NOTE: parameters here are coefficients
+
+            # Statistics
+            n = y.size                              # number of observations
+            m = p.size                              # number of parameters
+            dof = n - m                             # degrees of freedom
+            t = sp.stats.t.ppf(0.975, n - m)        # t-statistic; used for CI and PI bands
+
+            # Estimates of Error in Data/Model
+            resid = y - y_model                     # residuals; diff. actual data from predicted values
+            chi2 = np.sum((resid / y_model)**2)     # chi-squared; estimates error in data
+            chi2_red = chi2 / dof                   # reduced chi-squared; measures goodness of fit
+            s_err = np.sqrt(np.sum(resid**2) / dof) # standard deviation of the error
+
+            # Fit
+            ax.plot(x, y_model, "-", color="0.1", linewidth=1.5, alpha=0.5, label="Fit")  
+
+            x2 = np.linspace(np.min(x), np.max(x), 100)
+            y2 = equation(p, x2)
+
+            # Confidence Interval (select one)
+            ax = plot_ci_manual(t, s_err, n, x, x2, y2, ax=ax)
+            #plot_ci_bootstrap(x, y, resid, ax=ax)
+               
+            # Prediction Interval
+            pi = t * s_err * np.sqrt(1 + 1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))   
+            ax.fill_between(x2, y2 + pi, y2 - pi, color="None", linestyle="--")
+            ax.plot(x2, y2 - pi, "--", color="0.5", label="95% Prediction Limits")
+            ax.plot(x2, y2 + pi, "--", color="0.5")
 
 
 
+        # format plot
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        ax.legend(loc=fig_legend_loc)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        if(annot_func is not None):
+            fig, ax = annot_func(fig, ax)
+
+        plt.tight_layout(pad=1.5)
+
+        if(file_export):
+            fig, ax = self._export_plot(
+                fig,
+                ax,
+                file_export_name,
+                file_export_path,
+                file_export_type,
+                title,
+                selection,
+                fig_size,
+            )
+
+        if(show_plot):
+            plt.show()
+
+def equation(a, b):
+    """Return a 1D polynomial."""
+    return np.polyval(a, b)
+
+def plot_ci_manual(t, s_err, n, x, x2, y2, ax=None):
+    r"""Return an axes of confidence bands using a simple approach.
+    
+    Notes
+    -----
+    .. math:: \left| \: \hat{\mu}_{y|x0} - \mu_{y|x0} \: \right| \; \leq \; T_{n-2}^{.975} \; \hat{\sigma} \; \sqrt{\frac{1}{n}+\frac{(x_0-\bar{x})^2}{\sum_{i=1}^n{(x_i-\bar{x})^2}}}
+    .. math:: \hat{\sigma} = \sqrt{\sum_{i=1}^n{\frac{(y_i-\hat{y})^2}{n-2}}}
+    
+    References
+    ----------
+    .. [1] M. Duarte.  "Curve fitting," Jupyter Notebook.
+       http://nbviewer.ipython.org/github/demotu/BMC/blob/master/notebooks/CurveFitting.ipynb
+    
+    Example found on: https://stackoverflow.com/questions/27164114/show-confidence-limits-and-prediction-limits-in-scatter-plot
+    """
+    if ax is None:
+        ax = plt.gca()
+    
+    ci = t * s_err * np.sqrt(1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))
+    ax.fill_between(x2, y2 + ci, y2 - ci, color="#b9cfe7", alpha=0.5)
+
+    return ax
 
 
 
@@ -879,7 +1090,7 @@ class Dated:
 
 
 
-        """
+"""
         # calculate temperature drops for every sensor and every day
         self.t_drop = (
             dateseries.loc[
@@ -957,7 +1168,7 @@ class Dated:
 
 
 
-class Binned:
+class Binned_deprecated:
     
     def __init__(
         self,
