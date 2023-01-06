@@ -49,6 +49,81 @@ DataFrame
         2: unit: T, count (of datapoints in timerange)
 """
 
+def change_hex_brightness(color, factor, to_white=False, hash_out=True):
+    """
+    Change the brightness of a hex color.
+    
+    Parameters
+    ----------
+    color: str
+        6-digit hex colour, with or withoud leading hash.
+    factor: float
+        Factor by which to brighten the color.
+        >1 will brighten up.
+        <1 will darken.
+    to_white: bool, optional
+        Instead of multiplying the brightness, divide the remainder to full white.
+        Default False.
+    hash_out: bool, optional
+        Return the color with a hash.
+        Default True.
+
+    Returns
+    -------
+    str:
+        New color, with leading hash
+    """
+    if(len(color) != 6):
+        if(len(color) == 7 and color[0] == "#"):
+            color = color[1:]
+        else:
+            raise Exception("Expected 6 digit hex color")
+
+    if(hash_out):
+        out = "#"
+    else:
+        out = ""
+
+    for i in range(3):
+        c = int(color[2*i : 2*i+2], 16) * factor
+        if(c > 255):
+            c = 255
+        else:
+            c = int(c)
+        out = f"{out}{c:02X}"
+
+    return out
+
+def extract_records_from_dateseries(dateseries, selection, frames, bin_key="default"):
+    # if delta T
+    if(isinstance(frames, tuple) or isinstance(frames, list)):
+        sub_1 = dateseries.loc[
+            :,
+            (selection, frames[0], "T"),
+        ].droplevel((1,2,), axis=1)
+        sub_2 = dateseries.loc[
+            :,
+            (selection, frames[1], "T"),
+        ].droplevel((1,2,), axis=1)
+        y = (sub_1 - sub_2).mean(axis=1)
+
+    # if absolute value
+    else:
+        y = dateseries.loc[
+            :,
+            (selection, frames, "T"),
+        ].droplevel((1,2,), axis=1).mean(axis=1)
+
+    x = dateseries[("binning", bin_key, "ref_T")]
+
+    # clean nan values
+    cleaned = ~pd.DataFrame({"x": x.isnull(), "y": y.isnull()}).any(axis=1)
+    x = x.loc[cleaned]
+    y = y.loc[cleaned]
+
+    return x, y
+
+
 class Base:
 
     def __init__(self):
@@ -147,6 +222,70 @@ class Base:
 
         else:
             return sensor_manual
+
+    def regression(
+        self,
+        x,
+        y,
+    ):
+        p, cov = np.polyfit(x, y, 1, cov=True)  # parameters and covariance from of the fit of 1-D polynom.
+        y_model = np.polyval(p, x)              # model using the fit parameters; NOTE: parameters here are 
+
+        n = y.size                              # number of observations
+        m = p.size                              # number of parameters
+        dof = n - m                             # degrees of freedom
+        t = sp.stats.t.ppf(0.975, n - m)        # t-statistic; used for CI and PI bands
+
+        # Estimates of Error in Data/Model
+        resid = y - y_model                     # residuals; diff. actual data from predicted values
+        chi2 = np.sum((resid / y_model)**2)     # chi-squared; estimates error in data
+        chi2_red = chi2 / dof                   # reduced chi-squared; measures goodness of fit
+        s_err = np.sqrt(np.sum(resid**2) / dof) # standard deviation of the error
+
+        return p, cov, y_model, t, resid, s_err, chi2_red, n, m
+
+    def _plot_regression(
+        self,
+        fig,
+        ax,
+        x,
+        y,
+        plot_ci=True,
+        plot_pi=True,
+        color="#006BA4",
+        hatch=None,
+        legend_annex="",
+    ):
+        # regression analysis
+        p, cov, y_model, t, resid, s_err, chi2_red, n, m = self.regression(x, y)
+
+        # Fit
+        ax.plot(x, y_model, "-", color=change_hex_brightness(color, 1.2), linewidth=1.5, alpha=0.5, label="Regressionsgerade"+legend_annex)  
+
+        x2 = np.linspace(np.min(x), np.max(x), 100)
+        y2 = np.polyval(p, x2)
+
+        # Confidence Interval
+        if(plot_ci):
+            ci = t * s_err * np.sqrt(1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))
+            ax.fill_between(
+                x2,
+                y2 + ci,
+                y2 - ci,
+                color=change_hex_brightness(color, 1.2),
+                alpha=0.4,
+                hatch=hatch,
+                label="Konfidenzintervall 95%"+legend_annex,
+            )
+
+        # Prediction Interval
+        if(plot_pi):
+            pi = t * s_err * np.sqrt(1 + 1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))   
+            #ax.fill_between(x2, y2 + pi, y2 - pi, color="None", linestyle="--", hatch=hatch)
+            ax.plot(x2, y2 - pi, "--", color=change_hex_brightness(color, 1.5), label="Vorhersagegrenze 95%"+legend_annex)
+            ax.plot(x2, y2 + pi, "--", color=change_hex_brightness(color, 1.5))
+
+        return fig, ax
 
 
 class Timed(Base):
@@ -813,7 +952,7 @@ class Dated(Base):
         sensor_locations=None,
         sensor_manual=None,
         bin_key="default",
-        frames=("21-1", "27-1",),
+        frames=("21-1", "27-1", ),
         boxplot=True,
         boxplot_and_line=False,
         fig_size=(10,6),
@@ -931,8 +1070,9 @@ class Dated(Base):
         sensor_locations=None,
         sensor_manual=None,
         bin_key="default",
-        frames=("21-1", "27-1",),
-        confidence_interval=True,
+        frames=("21-1", "27-1", ),
+        plot_ci=True,
+        plot_pi=True,
         fig_size=(10,6),
         fig_dpi=140,
         fig_legend_loc="upper right",
@@ -941,6 +1081,7 @@ class Dated(Base):
         title=None,
         xlabel="Tages-Referenztemperatur / °C",
         ylabel="Temperaturabfall / °C",
+        scatter_label=None,
         file_export=False,
         file_export_path="",
         file_export_name="auto",
@@ -957,70 +1098,15 @@ class Dated(Base):
         fig.set_facecolor("white")
         ax = fig.subplots()
 
-        # compute data
-        # delta
-        if(isinstance(frames, tuple) or isinstance(frames, list)):
-            sub_1 = self.dateseries.loc[
-                :,
-                (selection, frames[0], "T"),
-            ].droplevel((1,2,), axis=1)
-            sub_2 = self.dateseries.loc[
-                :,
-                (selection, frames[1], "T"),
-            ].droplevel((1,2,), axis=1)
-            y = (sub_1 - sub_2).mean(axis=1)
-
-        # absolute value
-        else:
-            y = self.dateseries.loc[
-                :,
-                (selection, frames, "T"),
-            ].droplevel((1,2,), axis=1).mean(axis=1)
-
-        x = self.dateseries[("binning", bin_key, "ref_T")]
-
-        # clean nan values
-        cleaned = ~pd.DataFrame({"x": x.isnull(), "y": y.isnull()}).any(axis=1)
-        x = x.loc[cleaned]
-        y = y.loc[cleaned]
+        # extract data
+        x, y = extract_records_from_dateseries(self.dateseries, selection, frames, bin_key)
 
         # scatter plot
-        ax.scatter(x, y, zorder=10)
+        ax.scatter(x, y, zorder=10, label=scatter_label)
 
         # confidence interval
-        if(confidence_interval):
-            p, cov = np.polyfit(x, y, 1, cov=True)  # parameters and covariance from of the fit of 1-D polynom.
-            y_model = equation(p, x)                # model using the fit parameters; NOTE: parameters here are coefficients
-
-            # Statistics
-            n = y.size                              # number of observations
-            m = p.size                              # number of parameters
-            dof = n - m                             # degrees of freedom
-            t = sp.stats.t.ppf(0.975, n - m)        # t-statistic; used for CI and PI bands
-
-            # Estimates of Error in Data/Model
-            resid = y - y_model                     # residuals; diff. actual data from predicted values
-            chi2 = np.sum((resid / y_model)**2)     # chi-squared; estimates error in data
-            chi2_red = chi2 / dof                   # reduced chi-squared; measures goodness of fit
-            s_err = np.sqrt(np.sum(resid**2) / dof) # standard deviation of the error
-
-            # Fit
-            ax.plot(x, y_model, "-", color="0.1", linewidth=1.5, alpha=0.5, label="Fit")  
-
-            x2 = np.linspace(np.min(x), np.max(x), 100)
-            y2 = equation(p, x2)
-
-            # Confidence Interval (select one)
-            ax = plot_ci_manual(t, s_err, n, x, x2, y2, ax=ax)
-            #plot_ci_bootstrap(x, y, resid, ax=ax)
-               
-            # Prediction Interval
-            pi = t * s_err * np.sqrt(1 + 1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))   
-            ax.fill_between(x2, y2 + pi, y2 - pi, color="None", linestyle="--")
-            ax.plot(x2, y2 - pi, "--", color="0.5", label="95% Prediction Limits")
-            ax.plot(x2, y2 + pi, "--", color="0.5")
-
-
+        if(plot_ci or plot_pi):
+            fig, ax = self._plot_regression(fig, ax, x, y, plot_ci=plot_ci, plot_pi=plot_pi)
 
         # format plot
         ax.set_xlim(xlim)
@@ -1051,32 +1137,127 @@ class Dated(Base):
         if(show_plot):
             plt.show()
 
-def equation(a, b):
-    """Return a 1D polynomial."""
-    return np.polyval(a, b)
 
-def plot_ci_manual(t, s_err, n, x, x2, y2, ax=None):
-    r"""Return an axes of confidence bands using a simple approach.
-    
-    Notes
-    -----
-    .. math:: \left| \: \hat{\mu}_{y|x0} - \mu_{y|x0} \: \right| \; \leq \; T_{n-2}^{.975} \; \hat{\sigma} \; \sqrt{\frac{1}{n}+\frac{(x_0-\bar{x})^2}{\sum_{i=1}^n{(x_i-\bar{x})^2}}}
-    .. math:: \hat{\sigma} = \sqrt{\sum_{i=1}^n{\frac{(y_i-\hat{y})^2}{n-2}}}
-    
-    References
-    ----------
-    .. [1] M. Duarte.  "Curve fitting," Jupyter Notebook.
-       http://nbviewer.ipython.org/github/demotu/BMC/blob/master/notebooks/CurveFitting.ipynb
-    
-    Example found on: https://stackoverflow.com/questions/27164114/show-confidence-limits-and-prediction-limits-in-scatter-plot
-    """
-    if ax is None:
-        ax = plt.gca()
-    
-    ci = t * s_err * np.sqrt(1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))
-    ax.fill_between(x2, y2 + ci, y2 - ci, color="#b9cfe7", alpha=0.5)
+class Compare(Base):
 
-    return ax
+    def __init__(
+        self,
+        dateseries_1,
+        dateseries_2,
+        sensor_type=None,
+        sensor_locations=None,
+        sensor_manual=None,
+        bin_key="default",
+    ):
+        self.dateseries_1 = dateseries_1
+        self.dateseries_2 = dateseries_2        
+        self.bin_key = bin_key
+        self.selection = self._sensor_selection(
+            sensor_type,
+            sensor_locations,
+            sensor_manual,
+        )
+
+
+    def compare_regression(
+        self,
+        selection_1=None,
+        selection_2=None,
+        frames=("21-1", "27-1", ),
+    ):
+        if(not selection_1):
+            selection_1 = self.selection
+        if(not selection_2):
+            selection_2 = self.selection
+
+        x1, y1 = extract_records_from_dateseries(self.dateseries_1, selection_1, frames, self.bin_key)
+        x2, y2 = extract_records_from_dateseries(self.dateseries_2, selection_2, frames, self.bin_key)
+        params_1 = self.regression(x1, y1) # p, cov, y_model, t, resid, s_err, chi2_red, n, m
+        params_2 = self.regression(x2, y2)
+        return params_1, params_2
+    
+    def plot_scatter(
+        self,
+        selection_1=None,
+        selection_2=None,
+        bin_key="default",
+        frames=("21-1", "27-1", ),
+        plot_ci=True,
+        plot_pi=True,
+        fig_size=(10,6),
+        fig_dpi=140,
+        fig_legend_loc="upper right",
+        xlim=None,
+        ylim=None,
+        title=None,
+        xlabel="Tages-Referenztemperatur / °C",
+        ylabel="Temperaturabfall / °C",
+        scatter_labels=(None, None),
+        file_export=False,
+        file_export_path="",
+        file_export_name="auto",
+        file_export_type="pdf",
+        show_plot=True,
+        annot_func=None,
+    ):
+        if(not selection_1):
+            selection_1 = self.selection
+        if(not selection_2):
+            selection_2 = self.selection
+
+        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
+        fig.set_facecolor("white")
+        ax = fig.subplots()
+
+        # extract data 1
+        x, y = extract_records_from_dateseries(self.dateseries_1, selection_1, frames, bin_key)
+
+        # scatter plot
+        ax.scatter(x, y, color="C0", zorder=10, label=scatter_labels[0])
+
+        # confidence interval
+        if(plot_ci or plot_pi):
+            fig, ax = self._plot_regression(fig, ax, x, y, color="#006BA4", hatch="///", plot_ci=plot_ci, plot_pi=plot_pi)
+
+        # extract data 1
+        x, y = extract_records_from_dateseries(self.dateseries_2, selection_2, frames, bin_key)
+
+        # scatter plot
+        ax.scatter(x, y, color="C1", zorder=10, label=scatter_labels[1])
+
+        # confidence interval
+        if(plot_ci or plot_pi):
+            fig, ax = self._plot_regression(fig, ax, x, y, color="#FF800E", hatch="\\\\\\", plot_ci=plot_ci, plot_pi=plot_pi)
+
+        # format plot
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        ax.legend(loc=fig_legend_loc)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        if(annot_func is not None):
+            fig, ax = annot_func(fig, ax)
+
+        plt.tight_layout(pad=1.5)
+
+        if(file_export):
+            fig, ax = self._export_plot(
+                fig,
+                ax,
+                file_export_name,
+                file_export_path,
+                file_export_type,
+                title,
+                self.selection,
+                fig_size,
+            )
+
+        if(show_plot):
+            plt.show()
+
 
 
 
