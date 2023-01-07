@@ -537,6 +537,8 @@ class Timed(Base):
         xlabel="Datum/Zeit (MESZ)",
         ylabel="Temperatur / °C",
         mode='lines',
+        height=None,
+        width=None,
         plot_all=False,
     ):
         if(len(sensors)==0):
@@ -557,6 +559,8 @@ class Timed(Base):
                 "sensor": "Sensor",
                 "variable": "Sensor",
             },
+            height=height,
+            width=width,
             #name=sensor_labels.get(args[0], args[0]),
         )
         #for sensor in args[1:]:
