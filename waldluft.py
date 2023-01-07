@@ -3,9 +3,9 @@
 """
 @author: Janosch Joerg, mail@janjo.ch
 
-V0.3.0
+V0.4.1
 
-221223
+221231
 
 """
 ################################################################################
@@ -145,13 +145,60 @@ class Base:
         """
         pass
 
-    def _export_plot(
+    def _plt_init(
+        self,
+        fig_size=(10,6),
+        fig_dpi=140,
+        face_color="white",
+    ):
+        plt.style.use("janjo-v0-0.mplstyle")
+        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
+        fig.set_facecolor(face_color)
+        ax = fig.subplots()
+
+        return fig, ax
+
+    def _plt_finish(
         self,
         fig,
         ax,
-        file_export_name,
-        file_export_path,
-        file_export_type,
+        title=None,
+        xlabel=None,
+        ylabel=None,
+        xlim=None,
+        ylim=None,
+        fig_legend_loc=None,
+        annot_func=None,
+    ):
+
+        # axis limits
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        # annotations
+        if(fig_legend_loc):
+            leg = ax.legend(loc=fig_legend_loc)
+            leg.set_zorder(20)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        # custom annotation
+        if(annot_func is not None):
+            fig, ax = annot_func(fig, ax)
+
+        # clean up layout
+        plt.tight_layout(pad=1.5)
+
+        return fig, ax
+
+    def _plt_export(
+        self,
+        fig,
+        ax,
+        fig_export_name,
+        fig_export_path,
+        fig_export_type,
         title,
         selection,
         fig_size,
@@ -162,20 +209,20 @@ class Base:
         Parameters
         ----------
         fig, ax: matplotlib.pyplot fig and ax objects
-        file_export_name: str
-        file_export_path: str or posix path
-        file_export_type: str or tuple of strs
+        fig_export_name: str
+        fig_export_path: str or posix path
+        fig_export_type: str or tuple of strs
         """
-        if str(file_export_name) == "auto":
-            file_export_name = str(title) + "_"
-            file_export_name += "".join(selection)
-            file_export_name += (
+        if str(fig_export_name) == "auto":
+            fig_export_name = str(title) + "_"
+            fig_export_name += "".join(selection)
+            fig_export_name += (
                 "_size-"
                 + str(fig_size[0])
                 + "-" + str(fig_size[1])
             )
-            file_export_name = (
-                file_export_name.replace(" ", "_")
+            fig_export_name = (
+                fig_export_name.replace(" ", "_")
                 .replace("(", "")
                 .replace(")", "")
                 .replace(",", "")
@@ -186,22 +233,24 @@ class Base:
             )
 
         if(
-            isinstance(file_export_type, tuple)
-            or isinstance(file_export_type, list)
+            isinstance(fig_export_type, tuple)
+            or isinstance(fig_export_type, list)
         ):
-            file_export_types = file_export_type
+            fig_export_types = fig_export_type
         else:
-            file_export_types = (file_export_type, )
+            fig_export_types = (fig_export_type, )
 
-        for file_export_type in file_export_types:
+        for fig_export_type in fig_export_types:
             
             img_path = (
-                Path(file_export_path)
-                / (file_export_name + "." + file_export_type))
+                Path(fig_export_path)
+                / (fig_export_name + "." + fig_export_type))
             plt.savefig(img_path, bbox_inches="tight")
             print("image was saved at", img_path)
 
         return fig, ax
+
+
 
     def _sensor_selection(
         self,
@@ -236,27 +285,6 @@ class Base:
         else:
             return sensor_manual
 
-    def regression(
-        self,
-        x,
-        y,
-    ):
-        p, cov = np.polyfit(x, y, 1, cov=True)  # parameters and covariance from of the fit of 1-D polynom.
-        y_model = np.polyval(p, x)              # model using the fit parameters; NOTE: parameters here are 
-
-        n = y.size                              # number of observations
-        m = p.size                              # number of parameters
-        dof = n - m                             # degrees of freedom
-        t = sp.stats.t.ppf(0.975, n - m)        # t-statistic; used for CI and PI bands
-
-        # Estimates of Error in Data/Model
-        resid = y - y_model                     # residuals; diff. actual data from predicted values
-        chi2 = np.sum((resid / y_model)**2)     # chi-squared; estimates error in data
-        chi2_red = chi2 / dof                   # reduced chi-squared; measures goodness of fit
-        s_err = np.sqrt(np.sum(resid**2) / dof) # standard deviation of the error
-
-        return p, cov, y_model, t, resid, s_err, chi2_red, n, m
-
     def _plot_regression(
         self,
         fig,
@@ -270,21 +298,22 @@ class Base:
         legend_annex="",
     ):
         # regression analysis
-        p, cov, y_model, t, resid, s_err, chi2_red, n, m = self.regression(x, y)
+        #p, cov, y_model, t, resid, s_err, chi2_red, n, m = self.regression(x, y)
+        reg = Regression(x, y)
 
         # Fit
-        ax.plot(x, y_model, "-", color=change_hex_brightness(color, 1.2), linewidth=1.5, alpha=0.5, label="Regressionsgerade"+legend_annex)  
+        ax.plot(reg.x, reg.y_model, "-", color=change_hex_brightness(color, 1.2), linewidth=1.5, alpha=0.5, label="Regressionsgerade"+legend_annex)  
 
-        x2 = np.linspace(np.min(x), np.max(x), 100)
-        y2 = np.polyval(p, x2)
+        reg.x2 = np.linspace(np.min(reg.x), np.max(reg.x), 100)
+        reg.y2 = np.polyval(reg.p, reg.x2)
 
         # Confidence Interval
         if(plot_ci):
-            ci = t * s_err * np.sqrt(1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))
+            reg.ci = reg.t * reg.s_err * np.sqrt(1/reg.n + (reg.x2 - np.mean(reg.x))**2 / np.sum((reg.x - np.mean(reg.x))**2))
             ax.fill_between(
-                x2,
-                y2 + ci,
-                y2 - ci,
+                reg.x2,
+                reg.y2 + reg.ci,
+                reg.y2 - reg.ci,
                 color=change_hex_brightness(color, 1.2),
                 alpha=0.4,
                 hatch=hatch,
@@ -293,12 +322,50 @@ class Base:
 
         # Prediction Interval
         if(plot_pi):
-            pi = t * s_err * np.sqrt(1 + 1/n + (x2 - np.mean(x))**2 / np.sum((x - np.mean(x))**2))   
-            #ax.fill_between(x2, y2 + pi, y2 - pi, color="None", linestyle="--", hatch=hatch)
-            ax.plot(x2, y2 - pi, "--", color=change_hex_brightness(color, 1.5), label="Vorhersagegrenze 95%"+legend_annex)
-            ax.plot(x2, y2 + pi, "--", color=change_hex_brightness(color, 1.5))
+            reg.pi = reg.t * reg.s_err * np.sqrt(1 + 1/reg.n + (reg.x2 - np.mean(reg.x))**2 / np.sum((reg.x - np.mean(reg.x))**2))   
+            ax.plot(reg.x2, reg.y2 - reg.pi, "--", color=change_hex_brightness(color, 1.5), label="Vorhersagegrenze 95%"+legend_annex)
+            ax.plot(reg.x2, reg.y2 + reg.pi, "--", color=change_hex_brightness(color, 1.5))
 
-        return fig, ax
+        return fig, ax, reg
+
+
+class Regression:
+
+    def __init__(
+        self,
+        x,
+        y,
+    ):
+        self.x = x
+        self.y = y
+        self.p, self.cov = np.polyfit(          # parameters and covariance from of the fit of 1-D polynom.
+            x,
+            y,
+            1,
+            cov=True,
+        )
+        self.y_model = np.polyval(              # model using the fit parameters; NOTE: parameters here are 
+            self.p,
+            x,
+        )
+
+        self.n = y.size                         # number of observations
+        self.m = self.p.size                    # number of parameters
+        self.dof = self.n - self.m              # degrees of freedom
+        self.t = sp.stats.t.ppf(                # t-statistic; used for CI and PI bands
+            0.975,
+            self.n - self.m,
+        )
+
+        # Estimates of Error in Data/Model
+        self.resid = y - self.y_model           # residuals; diff. actual data from predicted values
+        self.chi2 = np.sum(                     # chi-squared; estimates error in data
+            (self.resid / self.y_model)**2
+        )
+        self.chi2_red = self.chi2 / self.dof    # reduced chi-squared; measures goodness of fit
+        self.s_err = np.sqrt(                   # standard deviation of the error
+            np.sum(self.resid**2) / self.dof
+        )
 
 
 class Timed(Base):
@@ -335,6 +402,7 @@ class Timed(Base):
         self.sht_str = []
         self.sht_metadata = {}
         self.sht_sn = {}
+        self.filenames = {}
         directory = Path(directory)
         for fn in directory.iterdir():
 
@@ -348,6 +416,7 @@ class Timed(Base):
                 )
                 self.wtdl_str.append(match[1])
                 self.wtdl_int.append(int(match[2]))
+                self.filenames[match[1]] = match[0]
 
             # import SHT sensor data
             match = re.match("^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", fn.name)
@@ -359,19 +428,25 @@ class Timed(Base):
                 )
                 self.sht_str.append(match[1])
                 self.sht_int.append(int(match[2]))
+                self.filenames[match[1]] = match[0]
+
+        self.wtdl_str.sort()
+        self.wtdl_int.sort()
+        self.sht_str.sort()
+        self.sht_int.sort()
 
         # create single timeseries df
         for sensor in self.timeseries:
             self.timeseries[sensor]["T"].name = sensor
 
         if(feedback):
-            print("Successfully imported the following sensor data:")
+            print(f"Successfully imported the following sensor data from {str(directory)}:")
             print("    WTDL:")
             for wtdl in self.wtdl_str:
-                print("        " + wtdl)
+                print(f"        {wtdl:<4}| {self.filenames[wtdl]}")
             print("    SHT:")
             for sht in self.sht_str:
-                print("        " + sht + "  " + self.sht_sn[sht])
+                print(f"        {sht:<4}| {self.filenames[sht]:<21}| {self.sht_sn[sht]}")
 
     def _import_wtld_file(self, directory, filename, encoding="ansi"):
         data = pd.read_csv(
@@ -472,16 +547,17 @@ class Timed(Base):
         sensor_manual=None,
         fig_size=(10,6),
         fig_dpi=140,
+        face_color="white",
         fig_legend_loc="upper right",
         xlim=None,
         ylim=None,
         title=None,
         xlabel="Datum/Zeit (MESZ)",
         ylabel="Temperatur / °C",
-        file_export=False,
-        file_export_path="",
-        file_export_name="auto",
-        file_export_type="pdf",
+        fig_export=False,
+        fig_export_path="",
+        fig_export_name="auto",
+        fig_export_type="pdf",
         show_plot=True,
         annot_func=None,
     ):
@@ -490,9 +566,8 @@ class Timed(Base):
             sensor_locations,
             sensor_manual,
         )
-        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
-        fig.set_facecolor("white")
-        ax = fig.subplots()
+
+        fig, ax = self._plt_init(fig_size, fig_dpi, face_color)
 
         for sensor in selection:
             ax.plot(
@@ -502,26 +577,26 @@ class Timed(Base):
                 ms=None,
             )
 
-        ax.set_xlim(xlim)
-        ax.set_ylim(ylim)
+        # finish plot
+        fig, ax = self._plt_finish(
+            fig,
+            ax,
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            xlim=xlim,
+            ylim=ylim,
+            fig_legend_loc=fig_legend_loc,
+            annot_func=annot_func,
+        )
 
-        ax.legend(loc=fig_legend_loc)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-
-        if(annot_func is not None):
-            fig, ax = annot_func(fig, ax)
-
-        plt.tight_layout(pad=1.5)
-
-        if(file_export):
-            fig, ax = self._export_plot(
+        if(fig_export):
+            fig, ax = self._plt_export(
                 fig,
                 ax,
-                file_export_name,
-                file_export_path,
-                file_export_type,
+                fig_export_name,
+                fig_export_path,
+                fig_export_type,
                 title,
                 selection,
                 fig_size,
@@ -974,16 +1049,17 @@ class Dated(Base):
         boxplot_and_line=False,
         fig_size=(10,6),
         fig_dpi=140,
-        fig_legend_loc="upper right",
+        face_color="white",
+        fig_legend_loc=None,
         xlim=None,
         ylim=None,
         title=None,
         xlabel="Tages-Referenztemperatur / °C",
         ylabel="Temperaturabfall / °C",
-        file_export=False,
-        file_export_path="",
-        file_export_name="auto",
-        file_export_type="pdf",
+        fig_export=False,
+        fig_export_path="",
+        fig_export_name="auto",
+        fig_export_type="pdf",
         show_plot=True,
         annot_func=None,
     ):
@@ -992,9 +1068,8 @@ class Dated(Base):
             sensor_locations,
             sensor_manual,
         )
-        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
-        fig.set_facecolor("white")
-        ax = fig.subplots()
+        
+        fig, ax = self._plt_init(fig_size, fig_dpi, face_color)
 
         # compute data
         y = []
@@ -1052,27 +1127,26 @@ class Dated(Base):
                 in range(len(self.bins[bin_key]) - 1)
             ])
 
-        # format plot
-        ax.set_xlim(xlim)
-        ax.set_ylim(ylim)
+        # finish plot
+        fig, ax = self._plt_finish(
+            fig,
+            ax,
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            xlim=xlim,
+            ylim=ylim,
+            fig_legend_loc=fig_legend_loc,
+            annot_func=annot_func,
+        )
 
-        #ax.legend(loc=fig_legend_loc)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-
-        if(annot_func is not None):
-            fig, ax = annot_func(fig, ax)
-
-        plt.tight_layout(pad=1.5)
-
-        if(file_export):
-            fig, ax = self._export_plot(
+        if(fig_export):
+            fig, ax = self._plt_export(
                 fig,
                 ax,
-                file_export_name,
-                file_export_path,
-                file_export_type,
+                fig_export_name,
+                fig_export_path,
+                fig_export_type,
                 title,
                 selection,
                 fig_size,
@@ -1092,6 +1166,7 @@ class Dated(Base):
         plot_pi=True,
         fig_size=(10,6),
         fig_dpi=140,
+        face_color="white",
         fig_legend_loc="upper right",
         xlim=None,
         ylim=None,
@@ -1099,21 +1174,21 @@ class Dated(Base):
         xlabel="Tages-Referenztemperatur / °C",
         ylabel="Temperaturabfall / °C",
         scatter_label=None,
-        file_export=False,
-        file_export_path="",
-        file_export_name="auto",
-        file_export_type="pdf",
+        fig_export=False,
+        fig_export_path="",
+        fig_export_name="auto",
+        fig_export_type="pdf",
         show_plot=True,
         annot_func=None,
+        return_reg=False,
     ):
         selection = self._sensor_selection(
             sensor_type,
             sensor_locations,
             sensor_manual,
         )
-        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
-        fig.set_facecolor("white")
-        ax = fig.subplots()
+        
+        fig, ax = self._plt_init(fig_size, fig_dpi, face_color)
 
         # extract data
         x, y = extract_records_from_dateseries(self.dateseries, selection, frames, bin_key)
@@ -1123,29 +1198,28 @@ class Dated(Base):
 
         # confidence interval
         if(plot_ci or plot_pi):
-            fig, ax = self._plot_regression(fig, ax, x, y, plot_ci=plot_ci, plot_pi=plot_pi)
+            fig, ax, reg = self._plot_regression(fig, ax, x, y, plot_ci=plot_ci, plot_pi=plot_pi)
 
-        # format plot
-        ax.set_xlim(xlim)
-        ax.set_ylim(ylim)
+        # finish plot
+        fig, ax = self._plt_finish(
+            fig,
+            ax,
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            xlim=xlim,
+            ylim=ylim,
+            fig_legend_loc=fig_legend_loc,
+            annot_func=annot_func,
+        )
 
-        ax.legend(loc=fig_legend_loc)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-
-        if(annot_func is not None):
-            fig, ax = annot_func(fig, ax)
-
-        plt.tight_layout(pad=1.5)
-
-        if(file_export):
-            fig, ax = self._export_plot(
+        if(fig_export):
+            fig, ax = self._plt_export(
                 fig,
                 ax,
-                file_export_name,
-                file_export_path,
-                file_export_type,
+                fig_export_name,
+                fig_export_path,
+                fig_export_type,
                 title,
                 selection,
                 fig_size,
@@ -1153,6 +1227,9 @@ class Dated(Base):
 
         if(show_plot):
             plt.show()
+
+        if(return_reg):
+            return reg
 
 
 class Compare(Base):
@@ -1203,70 +1280,69 @@ class Compare(Base):
         plot_pi=True,
         fig_size=(10,6),
         fig_dpi=140,
-        fig_legend_loc="upper right",
+        face_color="white",
+        fig_legend_loc="lower right",
         xlim=None,
         ylim=None,
         title=None,
         xlabel="Tages-Referenztemperatur / °C",
         ylabel="Temperaturabfall / °C",
         scatter_labels=(None, None),
-        file_export=False,
-        file_export_path="",
-        file_export_name="auto",
-        file_export_type="pdf",
+        fig_export=False,
+        fig_export_path="",
+        fig_export_name="auto",
+        fig_export_type="pdf",
         show_plot=True,
         annot_func=None,
+        return_reg=False,
     ):
         if(not selection_1):
             selection_1 = self.selection
         if(not selection_2):
             selection_2 = self.selection
 
-        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
-        fig.set_facecolor("white")
-        ax = fig.subplots()
+        fig, ax = self._plt_init(fig_size, fig_dpi, face_color)
 
         # extract data 1
-        x, y = extract_records_from_dateseries(self.dateseries_1, selection_1, frames, bin_key)
+        x1, y1 = extract_records_from_dateseries(self.dateseries_1, selection_1, frames, bin_key)
 
-        # scatter plot
-        ax.scatter(x, y, color="C0", zorder=10, label=scatter_labels[0])
+        # scatter plot 1
+        ax.scatter(x1, y1, color="C0", zorder=10, label=scatter_labels[0])
 
-        # confidence interval
+        # confidence interval 1
         if(plot_ci or plot_pi):
-            fig, ax = self._plot_regression(fig, ax, x, y, color="#006BA4", hatch="///", plot_ci=plot_ci, plot_pi=plot_pi)
+            fig, ax, reg1 = self._plot_regression(fig, ax, x1, y1, color="#006BA4", hatch="///", plot_ci=plot_ci, plot_pi=plot_pi)
 
-        # extract data 1
-        x, y = extract_records_from_dateseries(self.dateseries_2, selection_2, frames, bin_key)
+        # extract data 2
+        x2, y2 = extract_records_from_dateseries(self.dateseries_2, selection_2, frames, bin_key)
 
-        # scatter plot
-        ax.scatter(x, y, color="C1", zorder=10, label=scatter_labels[1])
+        # scatter plot 2
+        ax.scatter(x2, y2, color="C1", zorder=10, label=scatter_labels[1])
 
-        # confidence interval
+        # confidence interval 2
         if(plot_ci or plot_pi):
-            fig, ax = self._plot_regression(fig, ax, x, y, color="#FF800E", hatch="\\\\\\", plot_ci=plot_ci, plot_pi=plot_pi)
+            fig, ax, reg2 = self._plot_regression(fig, ax, x2, y2, color="#FF800E", hatch="\\\\\\", plot_ci=plot_ci, plot_pi=plot_pi)
 
-        # format plot
-        ax.set_xlim(xlim)
-        ax.set_ylim(ylim)
+        # finish plot
+        fig, ax = self._plt_finish(
+            fig,
+            ax,
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            xlim=xlim,
+            ylim=ylim,
+            fig_legend_loc=fig_legend_loc,
+            annot_func=annot_func,
+        )
 
-        ax.legend(loc=fig_legend_loc)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-
-        if(annot_func is not None):
-            fig, ax = annot_func(fig, ax)
-
-        plt.tight_layout(pad=1.5)
-
-        if(file_export):
-            fig, ax = self._export_plot(
+        if(fig_export):
+            fig, ax = self._plt_export(
                 fig,
                 ax,
-                file_export_name,
-                file_export_path,
-                file_export_type,
+                fig_export_name,
+                fig_export_path,
+                fig_export_type,
                 title,
                 self.selection,
                 fig_size,
@@ -1274,6 +1350,9 @@ class Compare(Base):
 
         if(show_plot):
             plt.show()
+
+        if(return_reg):
+            return reg1, reg2
 
 
 
@@ -1365,7 +1444,7 @@ class Compare(Base):
         
 
 
-
+"""
 class Binned_deprecated:
     
     def __init__(
@@ -1550,16 +1629,17 @@ class Binned_deprecated:
         sensor_manual=None,
         fig_size=(10,6),
         fig_dpi=140,
+        face_color="white",
         fig_legend_loc="upper right",
         xlim=None,
         ylim=None,
         title="Standortabhängiger Temperaturabfall nach Tages-Referenztemperatur",
         xlabel="Referenztemperatur / °C",
         ylabel="Temperaturabfall / °C",
-        file_export=False,
-        file_export_path="",
-        file_export_name="auto",
-        file_export_type="pdf",
+        fig_export=False,
+        fig_export_path="",
+        fig_export_name="auto",
+        fig_export_type="pdf",
         show_plot=True,
     ):
         selection = self._sensor_selection(
@@ -1567,10 +1647,8 @@ class Binned_deprecated:
             sensor_locations,
             sensor_manual,
         )
-        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
-        ax = fig.subplots()
         
-        fig.set_facecolor("white")
+        fig, ax = self._plt_init(fig_size, fig_dpi, face_color)
         
         for sensor in selection:
             ax.plot(
@@ -1590,17 +1668,17 @@ class Binned_deprecated:
 
         plt.tight_layout(pad=1.5)
 
-        if(file_export):
-            if str(file_export_name) == "auto":
-                file_export_name = title + "_"
-                file_export_name += "".join(selection)
-                file_export_name += (
+        if(fig_export):
+            if str(fig_export_name) == "auto":
+                fig_export_name = title + "_"
+                fig_export_name += "".join(selection)
+                fig_export_name += (
                     "_size-"
                     + str(fig_size[0])
                     + "-" + str(fig_size[1])
                 )
-                file_export_name = (
-                    file_export_name.replace(" ", "_")
+                fig_export_name = (
+                    fig_export_name.replace(" ", "_")
                     .replace("(", "")
                     .replace(")", "")
                     .replace(",", "")
@@ -1609,15 +1687,15 @@ class Binned_deprecated:
                 )
                 
             img_path = os.path.join(
-                file_export_path,
-                file_export_name + "." + file_export_type,
+                fig_export_path,
+                fig_export_name + "." + fig_export_type,
             )
             plt.savefig(img_path, face_color="white", bbox_inches="tight")
             print("image was saved at", img_path)
 
         if(show_plot):
             plt.show()
-
+"""
 
 
 

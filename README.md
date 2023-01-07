@@ -1,3 +1,6 @@
 # kaltluftstrom
 
-[![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/Janjoch/kaltluftstrom.git/HEAD?labpath=Auswertung.ipynb)
+## Interaktive Ansicht der Rohdaten
+
+[![Binder](https://mybinder.org/badge_logo.svg)](https://link.janjo.ch/explore-kaltluft)
+*(Aufstarten kann einige Minuten dauern)*
