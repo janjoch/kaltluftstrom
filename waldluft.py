@@ -52,7 +52,7 @@ DataFrame
 def change_hex_brightness(color, factor, to_white=False, hash_out=True):
     """
     Change the brightness of a hex color.
-    
+
     Parameters
     ----------
     color: str
@@ -77,7 +77,9 @@ def change_hex_brightness(color, factor, to_white=False, hash_out=True):
         if(len(color) == 7 and color[0] == "#"):
             color = color[1:]
         else:
-            raise Exception("Expected 6 digit hex color")
+            raise Exception("Expected 6 digit hex color.")
+        if(factor<0):
+            raise Exception("Factor must be a positive value!")
 
     if(hash_out):
         out = "#"
@@ -85,11 +87,22 @@ def change_hex_brightness(color, factor, to_white=False, hash_out=True):
         out = ""
 
     for i in range(3):
-        c = int(color[2*i : 2*i+2], 16) * factor
-        if(c > 255):
-            c = 255
+        if(to_white):
+            c = int(color[2*i : 2*i+2], 16)
+            rest = 256 - c
+            c = 256 - (rest / factor)
+            if(c < 0):
+                c = 0
+            else:
+                c = int(c)
+
         else:
-            c = int(c)
+            c = int(color[2*i : 2*i+2], 16) * factor
+            if(c > 255):
+                c = 255
+            else:
+                c = int(c)
+
         out = f"{out}{c:02X}"
 
     return out
