@@ -1,5 +1,19 @@
 # Protokoll WTDL1
 
+## Anleitung Inbetriebnahme
+
+### Vorbereitung / Funktionskontrolle
+1. Batterie einsetzen
+2. Uhrzeit nach PC-Uhrzeit setzen (MESZ!)
+3. Flash-Speicher löschen
+4. Messrate einstellen
+5. mehrmalige Funktionskontrolle und mit Punkten 3 und 4 zurücksetzen
+
+### Vor Montage
+1. Messung aktivieren: DIP-Schalter OFF/ON
+
+
+## Protokoll
 
 05.07.2022 Inbetriebnahme WTDL1
 
@@ -25,3 +39,9 @@
 * W4 nicht gefunden
 
 
+09.04.2023
+* Inbetriebnahme und Funktionskontrolle neue Sensoren: W11-W62 + W2.2 + W4.2
+* Sprungantworten aufgezeichnet mit Sensoren W31, W32, W35.1 und W35.2
+	* Siehe html_graphics/jump_responses_icewater.html
+	* Dafür Messrate 3 s.
+	* Danach INB wie gewohnt mit Messrate 3 min, Flash-Speicher gelöscht.

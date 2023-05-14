@@ -407,7 +407,7 @@ class Timed(Base):
         for fn in directory.iterdir():
 
             # import WTDL sensor data
-            match = re.match("^(W([0-9]+))[A-Za-z0-9_-]*\.csv$", fn.name)
+            match = re.match("^(W([0-9]+(:?\.[0-9]+)?))[A-Za-z0-9_-]*\.csv$", fn.name)
             if(match):
                 self.timeseries[match[1]] = self._import_wtld_file(
                     directory,
@@ -415,7 +415,7 @@ class Timed(Base):
                     encoding,
                 )
                 self.wtdl_str.append(match[1])
-                self.wtdl_int.append(int(match[2]))
+                self.wtdl_int.append(match[2])
                 self.filenames[match[1]] = match[0]
 
             # import SHT sensor data
@@ -631,6 +631,8 @@ class Timed(Base):
             labels={
                 "timestamp": xlabel,
                 "value": ylabel,
+                "x": xlabel,
+                "y": ylabel,
                 "sensor": "Sensor",
                 "variable": "Sensor",
             },
@@ -648,7 +650,7 @@ class Timed(Base):
                     name=self.sensor_labels.get(sensor, sensor),
                 )
             )
-        fig.show()
+        return fig
 
     def extract_dateseries(
         self,
