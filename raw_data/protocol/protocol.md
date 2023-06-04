@@ -13,6 +13,13 @@
 1. Messung aktivieren: DIP-Schalter OFF/ON
 
 
+## GPS-Daten
+https://l.janjo.ch/wtdl-gps
+
+https://map.geo.admin.ch
+-> import gps.kml
+
+
 ## Protokoll
 
 05.07.2022 Inbetriebnahme WTDL1
