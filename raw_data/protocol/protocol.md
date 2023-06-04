@@ -45,3 +45,10 @@
 	* Siehe html_graphics/jump_responses_icewater.html
 	* Dafür Messrate 3 s.
 	* Danach INB wie gewohnt mit Messrate 3 min, Flash-Speicher gelöscht.
+
+
+04.06.2023
+* Auslesung aller montierter Sensoren
+* ausser W35.1 / W25.2, da auf Baumkrone montiert
+* alle ausgelesenen Sensoren i.O.
+
