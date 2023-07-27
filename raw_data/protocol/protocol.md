@@ -59,3 +59,11 @@ https://map.geo.admin.ch
 * ausser W35.1 / W25.2, da auf Baumkrone montiert
 * alle ausgelesenen Sensoren i.O.
 
+
+23.07.2023
+* Auslesung aller montierter Sensoren (WTDL und SHT)
+* ausser W35.1 / W25.2, da auf Baumkrone montiert
+* Auslesefehler bei W11, W42, W62
+  * Daten konnten grösstenteils wiederhergestellt werden:
+  * W42 und W62 komplett
+  * W11 Datenverlust zwischen 12.07.23 13:20 - 2307.23 
