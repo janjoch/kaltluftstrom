@@ -78,4 +78,4 @@ bis 15.05.2023
 * Auslesefehler bei W11, W42, W62
   * Daten konnten grösstenteils wiederhergestellt werden:
   * W42 und W62 komplett
-  * W11 Datenverlust zwischen 12.07.23 13:20 - 2307.23 
+  * W11 Datenverlust zwischen 12.07.23 13:20 - 23.07.23 
