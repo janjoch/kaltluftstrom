@@ -54,6 +54,18 @@ https://map.geo.admin.ch
 	* Danach INB wie gewohnt mit Messrate 3 min, Flash-Speicher gelöscht.
 
 
+16.04.2023
+* Auslesung W1 - W9
+
+
+bis 11.05.2023, 15:30
+* Montage der Sensoren W11-W62, ausser W35.1 und W35.2 (Pius Moser)
+
+
+bis 15.05.2023
+* Montage W35.1 und W35.2 auf Baum (Pius Moser)
+
+
 04.06.2023
 * Auslesung aller montierter Sensoren
 * ausser W35.1 / W25.2, da auf Baumkrone montiert
