@@ -14,8 +14,11 @@ import re
 import types
 import datetime as dt
 from pathlib import Path
+from math import ceil
 
 import numpy as np
+
+import xarray as xr
 
 import pandas as pd
 
@@ -458,6 +461,88 @@ class Timed(Base):
         if drop_ms:
             ints[6] = 0
         return dt.datetime(*ints)
+    
+    def bin(
+        self,
+        sensors=None,
+        bins_per_h=4,
+    ):
+        mins = 60 / bins_per_h
+        if sensors is None:
+            sensors = self._sensor_selection()
+        # find time span
+        earliest_date = np.array([
+            self.timeseries[sensor]["T"].dropna().index.min()
+            for sensor in sensors
+        ]).min().date()
+        latest_date = np.array([
+            self.timeseries[sensor]["T"].dropna().index.max()
+            for sensor in sensors
+        ]).max().date()
+        days = (latest_date - earliest_date).days + 1
+        bins_per_day = bins_per_h * 24
+
+        # empty np arrays
+        mean = np.empty((
+            days * bins_per_day,
+            len(sensors),
+        ))
+        mean[:] = np.nan
+        std = mean.copy()
+        n = np.zeros((
+            days * bins_per_day,
+            len(sensors),
+        ))
+        for i_s, sensor in enumerate(sensors):
+            for bin in range(bins_per_day * days):
+                time_start = dt.datetime.combine(
+                    earliest_date,
+                    dt.time(),
+                ) + dt.timedelta(minutes=bin*mins)
+                time_stop = time_start + dt.timedelta(minutes=mins)
+                filtered = self.timeseries[sensor][
+                    time_start.strftime("%Y-%m-%d %H:%M:%S.%f"):
+                    time_stop.strftime(
+                        "%Y-%m-%d %H:%M:%S.%f"
+                    )
+                ]
+                #return filtered
+                mean[
+                    bin,
+                    i_s,
+                ] = filtered["T"].mean()
+                std[
+                    bin,
+                    i_s,
+                ] = filtered["T"].std()
+                n[
+                    bin,
+                    i_s,
+                ] = len(filtered["T"])
+
+        timestamp = [
+            dt.datetime.combine(
+                earliest_date,
+                dt.time(),
+            ) + dt.timedelta(minutes=bin*mins)
+            for bin in range(bins_per_day * days)
+        ]
+
+        coords = ["timestamp", "sensor"]
+        binned = xr.Dataset(
+            data_vars=dict(
+                mean=(coords, mean),
+                std=(coords, std),
+                n=(coords, n),
+            ),
+            coords=dict(
+                timestamp=timestamp,
+                # location=["A", "B"],
+                sensor=list(sensors),
+            )
+        )
+
+        return binned
 
     def plot_temp_time_old(
         self,
