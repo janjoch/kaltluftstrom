@@ -466,19 +466,23 @@ class Timed(Base):
         self,
         sensors=None,
         bins_per_h=4,
+        earliest_date=None,
+        latest_date=None,
     ):
         mins = 60 / bins_per_h
         if sensors is None:
             sensors = self._sensor_selection()
         # find time span
-        earliest_date = np.array([
-            self.timeseries[sensor]["T"].dropna().index.min()
-            for sensor in sensors
-        ]).min().date()
-        latest_date = np.array([
-            self.timeseries[sensor]["T"].dropna().index.max()
-            for sensor in sensors
-        ]).max().date()
+        if earliest_date is None:
+            earliest_date = np.array([
+                self.timeseries[sensor]["T"].dropna().index.min()
+                for sensor in sensors
+            ]).min().date()
+        if latest_date is None:
+            latest_date = np.array([
+                self.timeseries[sensor]["T"].dropna().index.max()
+                for sensor in sensors
+            ]).max().date()
         days = (latest_date - earliest_date).days + 1
         bins_per_day = bins_per_h * 24
 
