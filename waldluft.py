@@ -16,6 +16,8 @@ import datetime as dt
 from pathlib import Path
 from math import ceil
 
+import numba as nb
+
 import numpy as np
 
 import xarray as xr
@@ -104,6 +106,62 @@ def extract_records_from_dateseries(dateseries, selection, frames, bin_key="defa
     y = y.loc[cleaned]
 
     return x, y
+
+
+@nb.jit(nopython=True, parallel=True)
+def _bin_stats(slice_):
+    return (
+        slice_.mean(),
+        slice_.std(),
+        slice_.size,
+    )
+
+
+def _filter_bins(
+    index,
+    t,
+    earliest_date,
+    bins,
+    bins_per_h,
+):
+    index_size = index.size
+    boundaries = np.empty(bins + 1, np.uint)
+    secs = 3600 / bins_per_h
+    earliest_date = np.datetime64(earliest_date)
+
+    # find first index
+    i = 0
+    for i in range(index_size):
+        if index[i] >= earliest_date:
+            break
+    boundaries[0] = i
+
+    # find intervals
+    for bin_ in range(bins):
+        while i < index_size and index[i] < (
+            earliest_date + np.timedelta64(
+                int((bin_ + 1) * secs * 1000000),
+                "us",
+            )
+        ):
+            i = i + 1
+        boundaries[bin_ + 1] = i
+
+    if bin_ < bins - 1:
+        boundaries[bin_:] = 0
+
+    mean = np.empty(bins)
+    mean[:] = np.nan
+    std = mean.copy()
+    n = np.zeros(bins)
+
+    for bin in nb.prange(bins):
+        if boundaries[bin] < boundaries[bin + 1]:
+            mean[bin], std[bin], n[bin] = _bin_stats(t[
+                boundaries[bin]: boundaries[bin + 1]
+            ])
+
+    return mean, std, n
 
 
 class Base:
@@ -325,7 +383,10 @@ class Timed(Base):
         directory = Path(directory)
         for fn in directory.iterdir():
             # import WTDL sensor data
-            match = re.match(r"^(W([0-9]+(:?\.[0-9]+)?))[A-Za-z0-9_-]*\.csv$", fn.name)
+            match = re.match(
+                r"^(W([0-9]+(:?\.[0-9]+)?))[A-Za-z0-9_-]*\.csv$",
+                fn.name,
+            )
             if match:
                 self.timeseries[match[1]] = self._import_wtld_file(
                     directory,
@@ -359,7 +420,8 @@ class Timed(Base):
 
         if feedback:
             print(
-                f"Successfully imported the following sensor data from {str(directory)}:"
+                "Successfully imported the following sensor data "
+                f"from {str(directory)}:"
             )
             print("    WTDL:")
             for wtdl in self.wtdl_str:
@@ -379,7 +441,7 @@ class Timed(Base):
         data.rename(columns={"Temperatur [°C]": "T"}, inplace=True)
         data["timestamp"] = data["Zeit [s]"].apply(self._parse_wtdl_datetime)
         data.set_index("timestamp", inplace=True)
-        return data
+        return data.sort_index()
 
     def _import_sht_file(self, directory, filename, sensor_code):
         data = pd.read_csv(
@@ -461,7 +523,8 @@ class Timed(Base):
         if drop_ms:
             ints[6] = 0
         return dt.datetime(*ints)
-    
+
+    # @nb.jit(parallel=True, nopython=False)
     def bin(
         self,
         sensors=None,
@@ -469,9 +532,11 @@ class Timed(Base):
         earliest_date=None,
         latest_date=None,
     ):
-        mins = 60 / bins_per_h
+        secs = 3600 / bins_per_h
+
         if sensors is None:
             sensors = self._sensor_selection()
+
         # find time span
         if earliest_date is None:
             earliest_date = np.array([
@@ -483,53 +548,29 @@ class Timed(Base):
                 self.timeseries[sensor]["T"].dropna().index.max()
                 for sensor in sensors
             ]).max().date()
-        days = (latest_date - earliest_date).days + 1
-        bins_per_day = bins_per_h * 24
+        bins = (
+            ((latest_date - earliest_date).days + 1) * 24 * bins_per_h
+        )
 
         # empty np arrays
-        mean = np.empty((
-            days * bins_per_day,
-            len(sensors),
-        ))
+        mean = np.empty((bins, len(sensors)))
         mean[:] = np.nan
         std = mean.copy()
-        n = np.zeros((
-            days * bins_per_day,
-            len(sensors),
-        ))
-        for i_s, sensor in enumerate(sensors):
-            for bin in range(bins_per_day * days):
-                time_start = dt.datetime.combine(
-                    earliest_date,
-                    dt.time(),
-                ) + dt.timedelta(minutes=bin*mins)
-                time_stop = time_start + dt.timedelta(minutes=mins)
-                filtered = self.timeseries[sensor][
-                    time_start.strftime("%Y-%m-%d %H:%M:%S.%f"):
-                    time_stop.strftime(
-                        "%Y-%m-%d %H:%M:%S.%f"
-                    )
-                ]
-                #return filtered
-                mean[
-                    bin,
-                    i_s,
-                ] = filtered["T"].mean()
-                std[
-                    bin,
-                    i_s,
-                ] = filtered["T"].std()
-                n[
-                    bin,
-                    i_s,
-                ] = len(filtered["T"])
+        n = np.zeros((bins, len(sensors)))
+        for i_s in nb.prange(len(sensors)):
+            sensor = sensors[i_s]
+            index = np.array(self.timeseries[sensor].index)
+            t = np.array(self.timeseries[sensor]["T"], dtype=np.float64)
+
+            mean[:, i_s], std[:, i_s], n[:, i_s] = _filter_bins(
+                index, t, earliest_date, bins, bins_per_h)
 
         timestamp = [
             dt.datetime.combine(
                 earliest_date,
                 dt.time(),
-            ) + dt.timedelta(minutes=bin*mins)
-            for bin in range(bins_per_day * days)
+            ) + dt.timedelta(seconds=secs*bin)
+            for bin in range(bins)
         ]
 
         coords = ["timestamp", "sensor"]
@@ -547,71 +588,6 @@ class Timed(Base):
         )
 
         return binned
-
-    def plot_temp_time_old(
-        self,
-        sensor_type=None,
-        sensor_locations=None,
-        sensor_manual=None,
-        fig_size=(10, 6),
-        fig_dpi=140,
-        face_color="white",
-        fig_legend_loc="upper right",
-        xlim=None,
-        ylim=None,
-        title=None,
-        xlabel="Datum/Zeit (MESZ)",
-        ylabel="Temperatur / °C",
-        fig_export=False,
-        fig_export_path="",
-        fig_export_name="auto",
-        fig_export_type="pdf",
-        show_plot=True,
-        annot_func=None,
-    ):
-        selection = self._sensor_selection(
-            sensor_type,
-            sensor_locations,
-            sensor_manual,
-        )
-
-        fig, ax = self._plt_init(fig_size, fig_dpi, face_color)
-
-        for sensor in selection:
-            ax.plot(
-                self.timeseries[sensor].index,
-                self.timeseries[sensor]["T"],
-                label=self.sensor_labels.get(sensor, sensor),
-                ms=None,
-            )
-
-        # finish plot
-        fig, ax = self._plt_finish(
-            fig,
-            ax,
-            title=title,
-            xlabel=xlabel,
-            ylabel=ylabel,
-            xlim=xlim,
-            ylim=ylim,
-            fig_legend_loc=fig_legend_loc,
-            annot_func=annot_func,
-        )
-
-        if fig_export:
-            fig, ax = self._plt_export(
-                fig,
-                ax,
-                fig_export_name,
-                fig_export_path,
-                fig_export_type,
-                title,
-                selection,
-                fig_size,
-            )
-
-        if show_plot:
-            plt.show()
 
     @tb.plot.magic_plot_preset(
         xlabel="Datum/Zeit (MESZ)",
@@ -640,53 +616,6 @@ class Timed(Base):
                 y=self.timeseries[sensor]["T"].dropna(),
                 label=self.sensor_labels.get(sensor, sensor),
             )
-
-    def plot_temp_time_interactive(
-        self,
-        *sensors,
-        title=None,
-        xlabel="Datum/Zeit (MESZ)",
-        ylabel="Temperatur / °C",
-        mode="lines",
-        height=None,
-        width=None,
-        plot_all=False,
-    ):
-        if len(sensors) == 0:
-            if plot_all:
-                sensors = self._sensor_selection()
-            else:
-                raise Exception(
-                    "To avoid overload, "
-                    "please confirm plotting all sensors "
-                    "with plot_all=True"
-                )
-        fig = px.line(
-            # self.timeseries[args[0]]["T"].dropna(),
-            title=title,
-            labels={
-                "timestamp": xlabel,
-                "value": ylabel,
-                "x": xlabel,
-                "y": ylabel,
-                "sensor": "Sensor",
-                "variable": "Sensor",
-            },
-            height=height,
-            width=width,
-            # name=sensor_labels.get(args[0], args[0]),
-        )
-        # for sensor in args[1:]:
-        for sensor in sensors:
-            fig.add_trace(
-                go.Scatter(
-                    x=self.timeseries[sensor]["T"].dropna().index,
-                    y=self.timeseries[sensor]["T"].dropna(),
-                    mode=mode,
-                    name=self.sensor_labels.get(sensor, sensor),
-                )
-            )
-        return fig
 
     def extract_dateseries(
         self,
@@ -1475,3 +1404,208 @@ class Compare(Base):
 
         if return_reg:
             return reg1, reg2
+
+
+class _Deprecated:
+
+    def __init__(self):
+        pass
+
+    def bin_deprecated(
+        self,
+        sensors=None,
+        bins_per_h=4,
+        earliest_date=None,
+        latest_date=None,
+    ):
+        mins = 60 / bins_per_h
+        if sensors is None:
+            sensors = self._sensor_selection()
+        # find time span
+        if earliest_date is None:
+            earliest_date = np.array([
+                self.timeseries[sensor]["T"].dropna().index.min()
+                for sensor in sensors
+            ]).min().date()
+        if latest_date is None:
+            latest_date = np.array([
+                self.timeseries[sensor]["T"].dropna().index.max()
+                for sensor in sensors
+            ]).max().date()
+        days = (latest_date - earliest_date).days + 1
+        bins_per_day = bins_per_h * 24
+
+        # empty np arrays
+        mean = np.empty((
+            days * bins_per_day,
+            len(sensors),
+        ))
+        mean[:] = np.nan
+        std = mean.copy()
+        n = np.zeros((
+            days * bins_per_day,
+            len(sensors),
+        ))
+        for i_s, sensor in enumerate(sensors):
+            for bin in range(bins_per_day * days):
+                time_start = dt.datetime.combine(
+                    earliest_date,
+                    dt.time(),
+                ) + dt.timedelta(minutes=bin*mins)
+                time_stop = time_start + dt.timedelta(minutes=mins)
+                filtered = self.timeseries[sensor][
+                    time_start.strftime("%Y-%m-%d %H:%M:%S.%f"):
+                    time_stop.strftime(
+                        "%Y-%m-%d %H:%M:%S.%f"
+                    )
+                ]
+
+                mean[
+                    bin,
+                    i_s,
+                ] = filtered["T"].mean()
+                std[
+                    bin,
+                    i_s,
+                ] = filtered["T"].std()
+                n[
+                    bin,
+                    i_s,
+                ] = len(filtered["T"])
+
+        timestamp = [
+            dt.datetime.combine(
+                earliest_date,
+                dt.time(),
+            ) + dt.timedelta(minutes=bin*mins)
+            for bin in range(bins_per_day * days)
+        ]
+
+        coords = ["timestamp", "sensor"]
+        binned = xr.Dataset(
+            data_vars=dict(
+                mean=(coords, mean),
+                std=(coords, std),
+                n=(coords, n),
+            ),
+            coords=dict(
+                timestamp=timestamp,
+                # location=["A", "B"],
+                sensor=list(sensors),
+            )
+        )
+
+        return binned
+
+    def plot_temp_time_old(
+        self,
+        sensor_type=None,
+        sensor_locations=None,
+        sensor_manual=None,
+        fig_size=(10, 6),
+        fig_dpi=140,
+        face_color="white",
+        fig_legend_loc="upper right",
+        xlim=None,
+        ylim=None,
+        title=None,
+        xlabel="Datum/Zeit (MESZ)",
+        ylabel="Temperatur / °C",
+        fig_export=False,
+        fig_export_path="",
+        fig_export_name="auto",
+        fig_export_type="pdf",
+        show_plot=True,
+        annot_func=None,
+    ):
+        selection = self._sensor_selection(
+            sensor_type,
+            sensor_locations,
+            sensor_manual,
+        )
+
+        fig, ax = self._plt_init(fig_size, fig_dpi, face_color)
+
+        for sensor in selection:
+            ax.plot(
+                self.timeseries[sensor].index,
+                self.timeseries[sensor]["T"],
+                label=self.sensor_labels.get(sensor, sensor),
+                ms=None,
+            )
+
+        # finish plot
+        fig, ax = self._plt_finish(
+            fig,
+            ax,
+            title=title,
+            xlabel=xlabel,
+            ylabel=ylabel,
+            xlim=xlim,
+            ylim=ylim,
+            fig_legend_loc=fig_legend_loc,
+            annot_func=annot_func,
+        )
+
+        if fig_export:
+            fig, ax = self._plt_export(
+                fig,
+                ax,
+                fig_export_name,
+                fig_export_path,
+                fig_export_type,
+                title,
+                selection,
+                fig_size,
+            )
+
+        if show_plot:
+            plt.show()
+
+    def plot_temp_time_interactive(
+        self,
+        *sensors,
+        title=None,
+        xlabel="Datum/Zeit (MESZ)",
+        ylabel="Temperatur / °C",
+        mode="lines",
+        height=None,
+        width=None,
+        plot_all=False,
+    ):
+        if len(sensors) == 0:
+            if plot_all:
+                sensors = self._sensor_selection()
+            else:
+                raise Exception(
+                    "To avoid overload, "
+                    "please confirm plotting all sensors "
+                    "with plot_all=True"
+                )
+        fig = px.line(
+            # self.timeseries[args[0]]["T"].dropna(),
+            title=title,
+            labels={
+                "timestamp": xlabel,
+                "value": ylabel,
+                "x": xlabel,
+                "y": ylabel,
+                "sensor": "Sensor",
+                "variable": "Sensor",
+            },
+            height=height,
+            width=width,
+            # name=sensor_labels.get(args[0], args[0]),
+        )
+        # for sensor in args[1:]:
+        for sensor in sensors:
+            fig.add_trace(
+                go.Scatter(
+                    x=self.timeseries[sensor]["T"].dropna().index,
+                    y=self.timeseries[sensor]["T"].dropna(),
+                    mode=mode,
+                    name=self.sensor_labels.get(sensor, sensor),
+                )
+            )
+        return fig
+
