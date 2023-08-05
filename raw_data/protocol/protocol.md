@@ -20,6 +20,14 @@ https://map.geo.admin.ch
 -> import gps.kml
 
 
+## Dateinamen
+W2.2-2_cleaned.csv
+* W2 => Standort und Typ (W: WTDL, S: SHT)
+* .2 => Sensor-ID, falls mehrere am Standort oder Ersatz aufgrund von Ausfall
+* -2 => Nummerierung, falls mehrere Files vorhanden
+* _cleaned => Bemerkung
+
+
 ## Protokoll
 
 05.07.2022 Inbetriebnahme WTDL1

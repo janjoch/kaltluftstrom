@@ -352,6 +352,7 @@ class Timed(Base):
         directory,
         feedback=True,
         sensor_labels=types.MappingProxyType({}),
+        locs=None,
         encoding="ansi",
     ):
         """
@@ -362,6 +363,9 @@ class Timed(Base):
         directory: str or posix path object
         feedback: bool, optional
             Mute feedback about imported data.
+        locs: tuple, optional
+            Provide locations to import.
+            Tuple of ints.
         encoding: str, optional
             File encoding of WTDL .csv files.
         """
@@ -381,21 +385,57 @@ class Timed(Base):
         self.sht_sn = {}
         self.filenames = {}
         directory = Path(directory)
+        self.sources = pd.DataFrame(
+            columns=("type", "loc", "id", "iterator", "comment", "filename"),
+        )
         for fn in directory.iterdir():
+
             # import WTDL sensor data
             match = re.match(
-                r"^(W([0-9]+(:?\.[0-9]+)?))[A-Za-z0-9_-]*\.csv$",
+                (
+                    r"^((W([0-9]+)(:?\.[0-9]+)?))"  # sensor-ID
+                    r"(:?-[0-9]+)?"  # file iterator
+                    r"_?([A-Za-z0-9_-]*)\.csv$"  # note
+                ),
                 fn.name,
             )
             if match:
-                self.timeseries[match[1]] = self._import_wtld_file(
-                    directory,
+
+                self.sources.loc[len(self.sources)] = [
+                    "W",
+                    match[3],
+                    match[1],
+                    match[5],
+                    match[6],
                     match[0],
+                ]
+
+            # return self.sources
+
+        w_sources = self.sources.loc[self.sources['type'] == "W"]
+        if locs is None:
+            w_locs = w_sources["loc"].drop_duplicates()
+        else:
+            w_locs = locs
+
+        for loc in w_locs:
+            files = w_sources.loc[w_sources["loc"] == str(loc)]
+            if len(files) == 0:
+                print(f"Warning: No file found for location {loc}")
+                continue
+
+            self.timeseries["W" + str(loc)] = pd.concat([
+                self._import_wtld_file(
+                    directory,
+                    row["filename"],  # filename
                     encoding,
                 )
-                self.wtdl_str.append(match[1])
-                self.wtdl_int.append(match[2])
-                self.filenames[match[1]] = match[0]
+                for _, row
+                in files.iterrows()
+            ]).sort_index()
+
+            self.wtdl_str.append("W" + str(loc))
+            self.wtdl_int.append(loc)
 
             # import SHT sensor data
             match = re.match(r"^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", fn.name)
@@ -441,7 +481,7 @@ class Timed(Base):
         data.rename(columns={"Temperatur [°C]": "T"}, inplace=True)
         data["timestamp"] = data["Zeit [s]"].apply(self._parse_wtdl_datetime)
         data.set_index("timestamp", inplace=True)
-        return data.sort_index()
+        return data
 
     def _import_sht_file(self, directory, filename, sensor_code):
         data = pd.read_csv(
