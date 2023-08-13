@@ -11,10 +11,10 @@ V0.4.1
 ###############################################################################
 
 import re
+import json
 import types
 import datetime as dt
 from pathlib import Path
-from math import ceil
 
 import numba as nb
 
@@ -28,8 +28,6 @@ import matplotlib.pyplot as plt
 
 import plotly.graph_objects as go
 import plotly.express as px
-
-import scipy as sp
 
 # get toolbox from https://github.com/janjoch/toolbox
 import toolbox as tb
@@ -56,7 +54,12 @@ DataFrame
 """
 
 
-def extract_records_from_dateseries(dateseries, selection, frames, bin_key="default"):
+def extract_records_from_dateseries(
+    dateseries,
+    selection,
+    frames,
+    bin_key="default",
+):
     # if delta T
     if isinstance(frames, tuple) or isinstance(frames, list):
         sub_1 = dateseries.loc[
@@ -171,100 +174,6 @@ class Base:
         """
         pass
 
-    def _plt_init(
-        self,
-        fig_size=(10, 6),
-        fig_dpi=140,
-        face_color="white",
-    ):
-        plt.style.use("janjo-v0-0.mplstyle")
-        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
-        fig.set_facecolor(face_color)
-        ax = fig.subplots()
-
-        return fig, ax
-
-    def _plt_finish(
-        self,
-        fig,
-        ax,
-        title=None,
-        xlabel=None,
-        ylabel=None,
-        xlim=None,
-        ylim=None,
-        fig_legend_loc=None,
-        annot_func=None,
-    ):
-        # axis limits
-        ax.set_xlim(xlim)
-        ax.set_ylim(ylim)
-
-        # annotations
-        if fig_legend_loc:
-            leg = ax.legend(loc=fig_legend_loc)
-            leg.set_zorder(20)
-        ax.set_title(title)
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-
-        # custom annotation
-        if annot_func is not None:
-            fig, ax = annot_func(fig, ax)
-
-        # clean up layout
-        plt.tight_layout(pad=1.5)
-
-        return fig, ax
-
-    def _plt_export(
-        self,
-        fig,
-        ax,
-        fig_export_name,
-        fig_export_path,
-        fig_export_type,
-        title,
-        selection,
-        fig_size,
-    ):
-        """
-        Export a matplotlib.pyplot plot.
-
-        Parameters
-        ----------
-        fig, ax: matplotlib.pyplot fig and ax objects
-        fig_export_name: str
-        fig_export_path: str or posix path
-        fig_export_type: str or tuple of strs
-        """
-        if str(fig_export_name) == "auto":
-            fig_export_name = str(title) + "_"
-            fig_export_name += "".join(selection)
-            fig_export_name += "_size-" + str(fig_size[0]) + "-" + str(fig_size[1])
-            fig_export_name = (
-                fig_export_name.replace(" ", "_")
-                .replace("(", "")
-                .replace(")", "")
-                .replace(",", "")
-                .replace(":", "")
-                .replace("/", "-")
-                .replace("\\", "-")
-                .replace("\n", "_")
-            )
-
-        if isinstance(fig_export_type, tuple) or isinstance(fig_export_type, list):
-            fig_export_types = fig_export_type
-        else:
-            fig_export_types = (fig_export_type,)
-
-        for fig_export_type in fig_export_types:
-            img_path = Path(fig_export_path) / (fig_export_name + "." + fig_export_type)
-            plt.savefig(img_path, bbox_inches="tight")
-            print("image was saved at", img_path)
-
-        return fig, ax
-
     def _sensor_selection(
         self,
         sensor_type=None,
@@ -303,7 +212,8 @@ class Base:
         legend_annex="",
     ):
         # regression analysis
-        # p, cov, y_model, t, resid, s_err, chi2_red, n, m = self.regression(x, y)
+        # p, cov, y_model, t, resid, s_err,
+        #     chi2_red, n, m = self.regression(x, y)
         reg = tb.arraytools.Regression(x, y)
 
         # Fit
@@ -352,7 +262,9 @@ class Timed(Base):
         directory,
         feedback=True,
         sensor_labels=types.MappingProxyType({}),
-        locs=None,
+        import_locs=None,
+        import_wtdl=True,
+        import_sht=True,
         encoding="ansi",
     ):
         """
@@ -363,7 +275,7 @@ class Timed(Base):
         directory: str or posix path object
         feedback: bool, optional
             Mute feedback about imported data.
-        locs: tuple, optional
+        import_locs: tuple, optional
             Provide locations to import.
             Tuple of ints.
         encoding: str, optional
@@ -386,11 +298,12 @@ class Timed(Base):
         self.filenames = {}
         directory = Path(directory)
         self.sources = pd.DataFrame(
-            columns=("type", "loc", "id", "iterator", "comment", "filename"),
+            columns=("type", "loc", "id", "iterator", "comment", "filename",
+                     "imported", "sn", "metadata"),
         )
         for fn in directory.iterdir():
 
-            # import WTDL sensor data
+            # find WTDL files
             match = re.match(
                 (
                     r"^((W([0-9]+)(:?\.[0-9]+)?))"  # sensor-ID
@@ -400,7 +313,6 @@ class Timed(Base):
                 fn.name,
             )
             if match:
-
                 self.sources.loc[len(self.sources)] = [
                     "W",
                     match[3],
@@ -408,15 +320,42 @@ class Timed(Base):
                     match[5],
                     match[6],
                     match[0],
+                    False,
+                    "",
+                    "",
                 ]
 
-            # return self.sources
+            # find SHT files
+            match = re.match(
+                (
+                    r"^((S([0-9]+)(:?\.[0-9]+)?))"  # sensor-ID
+                    r"(:?-[0-9]+)?"  # file iterator
+                    r"_?([A-Za-z0-9_-]*)\.edf$"  # note
+                ),
+                fn.name,
+            )
+            if match:
+                self.sources.loc[len(self.sources)] = [
+                    "S",
+                    match[3],
+                    match[1],
+                    match[5],
+                    match[6],
+                    match[0],
+                    False,
+                    "",
+                    "",
+                ]
 
-        w_sources = self.sources.loc[self.sources['type'] == "W"]
-        if locs is None:
-            w_locs = w_sources["loc"].drop_duplicates()
+        # import WTDL files
+        if import_wtdl:
+            w_sources = self.sources.loc[self.sources['type'] == "W"]
+            if import_locs is None:
+                w_locs = w_sources["loc"].drop_duplicates()
+            else:
+                w_locs = import_locs
         else:
-            w_locs = locs
+            w_locs = tuple()
 
         for loc in w_locs:
             files = w_sources.loc[w_sources["loc"] == str(loc)]
@@ -424,30 +363,73 @@ class Timed(Base):
                 print(f"Warning: No file found for location {loc}")
                 continue
 
-            self.timeseries["W" + str(loc)] = pd.concat([
-                self._import_wtld_file(
+            # self.timeseries["W" + str(loc)] = pd.concat([
+            #     self.import_wtdl_file(
+            #         directory,
+            #         row["filename"],  # filename
+            #         encoding,
+            #     )
+            #     self.sources.loc[index, "imported"] = True
+            #     for index, row
+            #     in files.iterrows()
+            # ]).sort_index()
+
+            data = []
+            for index, row in files.iterrows():
+                data.append(self.import_wtdl_file(
                     directory,
                     row["filename"],  # filename
-                    encoding,
-                )
-                for _, row
-                in files.iterrows()
-            ]).sort_index()
+                    encoding=encoding,
+                ))
+                self.sources.loc[index, "imported"] = True
+            self.timeseries["W" + str(loc)] = pd.concat(data).sort_index()
 
             self.wtdl_str.append("W" + str(loc))
             self.wtdl_int.append(loc)
 
-            # import SHT sensor data
-            match = re.match(r"^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", fn.name)
-            if match:
-                self.timeseries[match[1]] = self._import_sht_file(
+        # import SHT files
+        if import_sht:
+            s_sources = self.sources.loc[self.sources['type'] == "S"]
+            if import_locs is None:
+                s_locs = s_sources["loc"].drop_duplicates()
+            else:
+                s_locs = import_locs
+        else:
+            s_locs = tuple()
+
+        for loc in s_locs:
+            files = s_sources.loc[s_sources["loc"] == str(loc)]
+            if len(files) == 0:
+                print(f"Warning: No file found for location {loc}")
+                continue
+
+            data = []
+            for index, row in files.iterrows():
+                data_row, sn, metadata = self.import_sht_file(
                     directory,
-                    match[0],
-                    match[1],
+                    row["filename"],  # filename
                 )
-                self.sht_str.append(match[1])
-                self.sht_int.append(int(match[2]))
-                self.filenames[match[1]] = match[0]
+                data.append(data_row)
+                self.sources.loc[index, "imported"] = True
+                self.sources.loc[index, "sn"] = sn
+                self.sources.loc[index, "metadata"] = json.dumps(metadata)
+            self.timeseries["S" + str(loc)] = pd.concat(data).sort_index()
+
+            self.sht_str.append("S" + str(loc))
+            self.sht_int.append(loc)
+
+            if False:  # deprecated
+                # import SHT sensor data
+                match = re.match(r"^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", fn.name)
+                if match:
+                    self.timeseries[match[1]] = self.import_sht_file(
+                        directory,
+                        match[0],
+                        match[1],
+                    )
+                    self.sht_str.append(match[1])
+                    self.sht_int.append(int(match[2]))
+                    self.filenames[match[1]] = match[0]
 
         self.wtdl_str.sort()
         self.wtdl_int.sort()
@@ -460,30 +442,25 @@ class Timed(Base):
 
         if feedback:
             print(
-                "Successfully imported the following sensor data "
+                "found the following sensor data "
                 f"from {str(directory)}:"
             )
-            print("    WTDL:")
-            for wtdl in self.wtdl_str:
-                print(f"        {wtdl:<4}| {self.filenames[wtdl]}")
-            print("    SHT:")
-            for sht in self.sht_str:
-                print(
-                    f"        {sht:<4}| {self.filenames[sht]:<21}| {self.sht_sn[sht]}"
-                )
+            print(self.sources)
 
-    def _import_wtld_file(self, directory, filename, encoding="ansi"):
+    @staticmethod
+    def import_wtdl_file(directory, filename, encoding="ansi"):
         data = pd.read_csv(
             directory / filename,
             delimiter=";",
             encoding=encoding,
         )
         data.rename(columns={"Temperatur [°C]": "T"}, inplace=True)
-        data["timestamp"] = data["Zeit [s]"].apply(self._parse_wtdl_datetime)
+        data["timestamp"] = data["Zeit [s]"].apply(Timed._parse_wtdl_datetime)
         data.set_index("timestamp", inplace=True)
         return data
 
-    def _import_sht_file(self, directory, filename, sensor_code):
+    @staticmethod
+    def import_sht_file(directory, filename):
         data = pd.read_csv(
             directory / filename,
             header=9,
@@ -494,23 +471,24 @@ class Timed(Base):
             data[data["T"].isin([130.0])].index,
             inplace=True,
         )
-        data["timestamp"] = data["Local_Date_Time"].apply(
-            self._parse_sht_datetime,
+        data["timestamp"] = data["Epoch_UTC"].apply(
+            Timed._parse_sht_datetime,
         )
         data.set_index("timestamp", inplace=True)
         with open(directory / filename) as f:
-            self.sht_metadata[sensor_code] = {}
+            metadata = {}
             for i in range(8):
                 line = f.readline()
                 match = re.match("^# ([A-Za-z]+)=(.+)$", line)
                 if match:
-                    self.sht_metadata[sensor_code][match[1]] = match[2]
+                    metadata[match[1]] = match[2]
                 else:
                     print("nothing found in " + line)
-        self.sht_sn[sensor_code] = self.sht_metadata[sensor_code]["SensorId"]
-        return data
+        sn = metadata["SensorId"]
+        return data, sn, metadata
 
-    def _parse_wtdl_datetime(self, time_str):
+    @staticmethod
+    def _parse_wtdl_datetime(time_str):
         """
         Parse WTDL timestamps.
 
@@ -537,7 +515,8 @@ class Timed(Base):
         ints[0], ints[2] = ints[2], ints[0]
         return dt.datetime(*ints)
 
-    def _parse_sht_datetime(self, time_str, drop_ms=True):
+    @staticmethod
+    def _parse_sht_datetime_local(time_str, drop_ms=True):
         """
         Parse SHT timestamps.
 
@@ -563,6 +542,19 @@ class Timed(Base):
         if drop_ms:
             ints[6] = 0
         return dt.datetime(*ints)
+
+    @staticmethod
+    def _parse_sht_datetime(time_int):
+        """
+        Parse SHT timestamps.
+
+        Input Format: 1667091772.2 (epoch)
+        Output Format datetime.datetime
+        """
+        return (
+            dt.datetime.utcfromtimestamp(time_int)
+            + dt.timedelta(hours=2)
+        )
 
     # @nb.jit(parallel=True, nopython=False)
     def bin(
@@ -622,12 +614,17 @@ class Timed(Base):
             ),
             coords=dict(
                 timestamp=timestamp,
-                # location=["A", "B"],
                 sensor=list(sensors),
             )
         )
 
-        return binned
+        return Binned(
+            binned,
+            self.sensor_labels,
+            bins,
+            bins_per_h,
+            earliest_date,
+        )
 
     @tb.plot.magic_plot_preset(
         xlabel="Datum/Zeit (MESZ)",
@@ -723,18 +720,20 @@ class Timed(Base):
                     not ignore_dates or date not in ignore_dates
                 ):
                     if average_alg == "mean":
-                        self.dateseries.loc[date, (sensor, key, "T")] = filtered[
-                            "T"
-                        ].mean()
+                        self.dateseries.loc[
+                            date, (sensor, key, "T")
+                        ] = filtered["T"].mean()
                     elif average_alg == "median":
-                        self.dateseries.loc[date, (sensor, key, "T")] = filtered[
-                            "T"
-                        ].median()
+                        self.dateseries.loc[
+                            date, (sensor, key, "T")
+                        ] = filtered["T"].median()
                     else:
                         raise Exception(
                             "average_alg " + average_alg + " does not exist"
                         )
-                self.dateseries.loc[date, (sensor, key, "count")] = filtered.shape[0]
+                self.dateseries.loc[
+                    date, (sensor, key, "count")
+                ] = filtered.shape[0]
 
     def plot_dateseries_interactive(
         self,
@@ -773,35 +772,200 @@ class Timed(Base):
         )
         fig.show()
 
-    def binned_delta(
-        self,
-        key_binned,
-        key_ref,
-        key_2,
-        ref_sensors=None,
-        n_bins=5,
-        bounds=(None, None),
-        average_alg="mean",
-        detailed_analysis=False,
-    ):
-        if ref_sensors is None:
-            ref_sensors = self.selection
 
-        return Binned(
-            self.dateseries,
-            key_ref,
-            key_2,
-            ref_sensors,
-            n_bins,
-            bounds,
-            average_alg,
-            detailed_analysis,
-            self.wtdl_int,
-            self.wtdl_str,
-            self.sht_int,
-            self.sht_str,
-            self.sht_metadata,
-            self.sht_sn,
+class Binned(Base, tb.plot.NotebookInteraction):
+    def __init__(
+        self,
+        binned,
+        sensor_labels,
+        bins,
+        bins_per_h,
+        earliest_date,
+    ):
+        self.binned = binned
+        self.sensor_labels = sensor_labels
+        self.bins = bins
+        self.bins_per_h = bins_per_h
+        self.earliest_date = earliest_date
+
+    @tb.plot.magic_plot
+    def plot(
+        self,
+        locs=None,
+        wtdl=True,
+        sht=True,
+        mode="mean",
+        fig=None,
+        **kwargs,
+    ):
+        """
+        Plot the binned timeseries.
+
+        Parameters
+        ----------
+        locs: tuple, optional
+            Select locations to plot.
+            If set to None, all available locations will be plotted.
+            Default: None.
+        wtdl, sht: bool, optional
+            Display WTDL and SHT traces.
+            Default: True.
+        mode: str, optional
+            (mean, std, n)
+            Select whether to plot the mean, std or number of samples
+            in each bin.
+            Default: mean.
+        **kwargs
+            Keyword arguments for toolbox.plot.Plot.add_trace.
+        """
+        df = self.binned[mode].to_pandas()
+        if wtdl and sht:
+            regex = r"[WS]"
+        elif wtdl:
+            regex = r"W"
+        elif sht:
+            regex = r"S"
+        else:
+            print("Warning: Neither WTDL nor SHT selected...")
+            regex = r""
+        if locs is None:
+            regex += r"[0-9]+"
+        else:
+            regex += "(" + "|".join([str(loc) for loc in locs]) + ")"
+
+        for name, series in df.items():
+            if re.match(regex, name):
+                fig.add_line(
+                    series,
+                    label=self.sensor_labels.get(name, name),
+                    **kwargs,
+                )
+
+    def frame(
+        self,
+        hours=(),
+        bins=4,
+        sensors=None,
+    ):
+        bins_per_d = int(self.bins_per_h * 24)
+        days = int(self.bins / bins_per_d)
+
+        sensors = (
+            self.binned.coords["sensor"]
+            if sensors is None
+            else list(sensors)
+        )
+        mean = np.empty((days, len(sensors), len(hours)))
+        n = np.empty((days, len(sensors), len(hours)), dtype=int)
+
+        # iterate hour-frames, days and sensors
+        for i_h, hour in enumerate(hours):
+            start_bin = int(hour * self.bins_per_h)
+
+            for day in range(days):
+                for i_s, sensor in enumerate(sensors):
+
+                    # subset of Dataset
+                    subset = self.binned.isel(
+                        timestamp=slice(
+                            day * bins_per_d + start_bin,
+                            day * bins_per_d + start_bin + bins,
+                        )
+                    ).sel(sensor=sensor)
+                    n[day, i_s, i_h] = int(subset["n"].sum())
+
+                    # if no data available
+                    if n[day, i_s, i_h] <= 0:
+                        mean[day, i_s, i_h] = np.nan
+
+                    else:
+                        mean[day, i_s, i_h] = float(
+                            (
+                                subset["mean"] * subset["n"]
+                            ).sum() / n[day, i_s, i_h]
+                        )
+
+        date = [
+            self.earliest_date + dt.timedelta(days=day)
+            for day in range(days)
+        ]
+
+        coords = ["date", "sensor", "hour"]
+        framed = xr.Dataset(
+            data_vars=dict(
+                mean=(coords, mean),
+                n=(coords, n),
+            ),
+            coords=dict(
+                date=date,
+                sensor=sensors,
+                hour=list(hours),
+            )
+        )
+
+        return tb.plot.ShowDataset(
+            framed,
+            default_var="mean",
+            default_isel=dict(hour=0),
+        )
+
+    def min(
+        self,
+        sensors=None,
+    ):
+        bins_per_d = int(self.bins_per_h * 24)
+        offset = int(self.bins_per_h * -9)  # night starts the day before at 9h
+        days = int(self.bins / bins_per_d)
+
+        sensors = (
+            self.binned.coords["sensor"]
+            if sensors is None
+            else list(sensors)
+        )
+        min = np.empty((days, len(sensors)))
+        n = np.empty((days, len(sensors)), dtype=int)
+
+        # iterate days and sensors
+
+        for day in range(days):
+            for i_s, sensor in enumerate(sensors):
+
+                # subset of Dataset
+                subset = self.binned.isel(
+                    timestamp=slice(
+                        day * bins_per_d + offset,
+                        (day + 1) * bins_per_d + offset,
+                    )
+                ).sel(sensor=sensor)
+                n[day, i_s] = int(subset["n"].sum())
+
+                # if no data available
+                if n[day, i_s] <= 0:
+                    min[day, i_s] = np.nan
+
+                else:
+                    min[day, i_s] = float(subset["mean"].min())
+
+        date = [
+            self.earliest_date + dt.timedelta(days=day)
+            for day in range(days)
+        ]
+
+        coords = ["date", "sensor"]
+        min = xr.Dataset(
+            data_vars=dict(
+                min=(coords, min),
+                n=(coords, n),
+            ),
+            coords=dict(
+                date=date,
+                sensor=sensors,
+            )
+        )
+
+        return tb.plot.ShowDataset(
+            min,
+            default_var="min",
         )
 
 
@@ -955,8 +1119,8 @@ class Dated(Base):
                 time_start = date + timedelta_start
                 time_stop = time_start + timedelta_width
                 filtered = timeserie[
-                    time_start.strftime("%Y-%m-%d %H:%M:%S.%f")
-                    : time_stop.strftime(
+                    time_start.strftime("%Y-%m-%d %H:%M:%S.%f"):
+                    time_stop.strftime(
                         "%Y-%m-%d %H:%M:%S.%f"
                     )
                 ]
@@ -1446,6 +1610,110 @@ class Compare(Base):
             return reg1, reg2
 
 
+class _BaseDeprecated:
+    def _plt_init(
+        self,
+        fig_size=(10, 6),
+        fig_dpi=140,
+        face_color="white",
+    ):
+        plt.style.use("janjo-v0-0.mplstyle")
+        fig = plt.figure(figsize=fig_size, dpi=fig_dpi)
+        fig.set_facecolor(face_color)
+        ax = fig.subplots()
+
+        return fig, ax
+
+    def _plt_finish(
+        self,
+        fig,
+        ax,
+        title=None,
+        xlabel=None,
+        ylabel=None,
+        xlim=None,
+        ylim=None,
+        fig_legend_loc=None,
+        annot_func=None,
+    ):
+        # axis limits
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        # annotations
+        if fig_legend_loc:
+            leg = ax.legend(loc=fig_legend_loc)
+            leg.set_zorder(20)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+
+        # custom annotation
+        if annot_func is not None:
+            fig, ax = annot_func(fig, ax)
+
+        # clean up layout
+        plt.tight_layout(pad=1.5)
+
+        return fig, ax
+
+    def _plt_export(
+        self,
+        fig,
+        ax,
+        fig_export_name,
+        fig_export_path,
+        fig_export_type,
+        title,
+        selection,
+        fig_size,
+    ):
+        """
+        Export a matplotlib.pyplot plot.
+
+        Parameters
+        ----------
+        fig, ax: matplotlib.pyplot fig and ax objects
+        fig_export_name: str
+        fig_export_path: str or posix path
+        fig_export_type: str or tuple of strs
+        """
+        if str(fig_export_name) == "auto":
+            fig_export_name = str(title) + "_"
+            fig_export_name += "".join(selection)
+            fig_export_name += (
+                "_size-" + str(fig_size[0]) + "-" + str(fig_size[1])
+            )
+            fig_export_name = (
+                fig_export_name.replace(" ", "_")
+                .replace("(", "")
+                .replace(")", "")
+                .replace(",", "")
+                .replace(":", "")
+                .replace("/", "-")
+                .replace("\\", "-")
+                .replace("\n", "_")
+            )
+
+        if (
+            isinstance(fig_export_type, tuple)
+            or isinstance(fig_export_type, list)
+        ):
+            fig_export_types = fig_export_type
+        else:
+            fig_export_types = (fig_export_type,)
+
+        for fig_export_type in fig_export_types:
+            img_path = (
+                Path(fig_export_path)
+                / (fig_export_name + "." + fig_export_type)
+            )
+            plt.savefig(img_path, bbox_inches="tight")
+            print("image was saved at", img_path)
+
+        return fig, ax
+
+
 class _Deprecated:
 
     def __init__(self):
@@ -1648,4 +1916,3 @@ class _Deprecated:
                 )
             )
         return fig
-
