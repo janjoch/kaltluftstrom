@@ -32,6 +32,9 @@ import plotly.express as px
 # get toolbox from https://github.com/janjoch/toolbox
 import toolbox as tb
 
+if tb.plot.CALLED_FROM_NOTEBOOK:
+    from IPython.display import display, HTML
+
 """
 data structures
 ===============
@@ -418,19 +421,6 @@ class Timed(Base):
             self.sht_str.append("S" + str(loc))
             self.sht_int.append(loc)
 
-            if False:  # deprecated
-                # import SHT sensor data
-                match = re.match(r"^(S([0-9]+))[A-Za-z0-9_-]*\.edf$", fn.name)
-                if match:
-                    self.timeseries[match[1]] = self.import_sht_file(
-                        directory,
-                        match[0],
-                        match[1],
-                    )
-                    self.sht_str.append(match[1])
-                    self.sht_int.append(int(match[2]))
-                    self.filenames[match[1]] = match[0]
-
         self.wtdl_str.sort()
         self.wtdl_int.sort()
         self.sht_str.sort()
@@ -441,11 +431,10 @@ class Timed(Base):
             self.timeseries[sensor]["T"].name = sensor
 
         if feedback:
-            print(
-                "found the following sensor data "
-                f"from {str(directory)}:"
-            )
-            print(self.sources)
+            if tb.plot.CALLED_FROM_NOTEBOOK:
+                display(HTML(self.sources._repr_html_()))
+            else:
+                print(self.sources)
 
     @staticmethod
     def import_wtdl_file(directory, filename, encoding="ansi"):
@@ -563,6 +552,7 @@ class Timed(Base):
         bins_per_h=4,
         earliest_date=None,
         latest_date=None,
+        feedback=True,
     ):
         secs = 3600 / bins_per_h
 
@@ -575,11 +565,15 @@ class Timed(Base):
                 self.timeseries[sensor]["T"].dropna().index.min()
                 for sensor in sensors
             ]).min().date()
+            if feedback:
+                print("found earliest date:", str(earliest_date))
         if latest_date is None:
             latest_date = np.array([
                 self.timeseries[sensor]["T"].dropna().index.max()
                 for sensor in sensors
             ]).max().date()
+            if feedback:
+                print(" found latest date: ", str(latest_date))
         bins = (
             ((latest_date - earliest_date).days + 1) * 24 * bins_per_h
         )
@@ -909,6 +903,87 @@ class Binned(Base, tb.plot.NotebookInteraction):
             default_isel=dict(hour=0),
         )
 
+    def frame_groups(
+        self,
+        group,
+        hours=(),
+        bins=4,
+    ):
+        frame = self.frame(hours=hours, bins=bins, sensors=group)
+        mean = frame.data.mean(dim="sensor", skipna=False)
+        return tb.plot.ShowDataset(
+            mean,
+            default_var="mean",
+        )
+
+    def frame_ref_group(
+        self,
+        group,
+        hour,
+        bins=4,
+    ):
+        frame = self.frame_groups(group=group, hours=(hour,), bins=bins)
+        mean = frame.data.mean(dim="hour", skipna=False)
+        return tb.plot.ShowDataset(
+            mean,
+            default_var="mean",
+        )
+
+    def frame_delta(
+        self,
+        hour_1,
+        hour_2,
+        bins=4,
+        sensors=None,
+    ):
+        frame = self.frame(hours=(hour_1, hour_2), bins=bins, sensors=sensors)
+        delta = frame.data.sel(hour=hour_2) - frame.data.sel(hour=hour_1)
+        return tb.plot.ShowDataset(
+            delta,
+            default_var="mean",
+        )
+
+    def frame_groups_delta(
+        self,
+        group,
+        hour_1,
+        hour_2,
+        bins=4,
+    ):
+        frame_groups = self.frame_groups(
+            group=group,
+            hours=(hour_1, hour_2),
+            bins=bins,
+        )
+        groups_delta = (
+            frame_groups.data.sel(hour=hour_2)
+            - frame_groups.data.sel(hour=hour_1)
+        )
+        return tb.plot.ShowDataset(
+            groups_delta,
+            default_var="mean",
+        )
+
+    def regression(
+        self,
+        ref_group,
+        group,
+        ref_hour,
+        hour_1,
+        hour_2=None,
+        filter_ref_temp=None,
+        bins=4,
+    ):
+        if hour_2 is None:
+            hour_2 = hour_1
+            hour_1 = ref_hour
+
+        return Regression(
+            x=self.frame_ref_group(ref_group, ref_hour, bins=bins),
+            y=self.frame_groups_delta(group, hour_1, hour_2, bins=bins),
+            filter_x_range=filter_ref_temp,
+        )
+
     def min(
         self,
         sensors=None,
@@ -966,10 +1041,68 @@ class Binned(Base, tb.plot.NotebookInteraction):
         return tb.plot.ShowDataset(
             min,
             default_var="min",
+            day_start=0,
         )
 
+    def average_day(
+        self,
+        day_start=0,
+    ):
+        """to be finished..."""
+        bins_per_d = int(self.bins_per_h * 24)
+        days = int(self.bins / bins_per_d)
+        if day_start != 0:
+            days -= 1
 
-class Dated(Base):
+        for i in range(days):
+            pass
+
+
+class Regression(tb.arraytools.LinearRegression, Base):
+    def __init__(
+        self,
+        x,
+        y,
+        filter_x_range=None,
+    ):
+        # convert to np.array
+        if isinstance(x, tb.plot.ShowDataset):
+            index = x.data.coords["date"].data
+            x = np.array(x.data["mean"])
+        else:
+            index = None
+        if isinstance(y, tb.plot.ShowDataset):
+            y = np.array(y.data["mean"])
+
+        filter = np.ones((5, x.size), dtype=bool)
+
+        # find nan days
+        filter[1] = ~np.isnan(x)
+        filter[2] = ~np.isnan(y)
+
+        # find days out of boundary
+        if filter_x_range is not None:
+            if filter_x_range[0] is not None:
+                filter[3] = x > filter_x_range[0]
+            if filter_x_range[1] is not None:
+                filter[4] = x < filter_x_range[1]
+
+        # filter days
+        filter[0] = filter[1:].all(0)
+        self.filter = pd.DataFrame(filter.T, columns=(
+            "RESULT",
+            "x is valid number",
+            "y is valid number",
+            "too low",
+            "too high",
+        ), index=index)
+        x = x[filter[0]]
+        y = y[filter[0]]
+
+        super().__init__(x, y)
+
+
+class _Dated_Deprecated(Base):
     def __init__(
         self,
         timeseries,
@@ -1455,7 +1588,7 @@ class Dated(Base):
             return reg
 
 
-class Compare(Base):
+class _Compare_Deprecated(Base):
     def __init__(
         self,
         dateseries_1,
