@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 ###############################################################################
 """
-@author: Janosch Joerg, mail@janjo.ch
+@author: Janosch Joerg, janosch@duck.com
 
-V0.4.1
+V0.5.1
 
-221231
+230910
 
 """
 ###############################################################################
@@ -1093,8 +1093,8 @@ class Regression(tb.arraytools.LinearRegression, Base):
             "RESULT",
             "x is valid number",
             "y is valid number",
-            "too low",
-            "too high",
+            "within lower boundary",
+            "within higher boundary",
         ), index=index)
         x = x[filter[0]]
         y = y[filter[0]]
