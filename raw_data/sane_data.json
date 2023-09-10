@@ -1,0 +1,21 @@
+{
+    0: "THIS FILE IS STILL UNDER CONSTRUCTION!",
+    1: {
+        22: {
+            "230416": [
+                "W1.csv",
+                ["time-from", "time-to"],
+                ["time-from", "time-to"],
+                ["time-from", "time-to"],
+            ]
+        },
+        23: {
+            "230604": [
+                "W1.csv",
+                ["time-from", "time-to"],
+                ["time-from", "time-to"],
+                ["time-from", "time-to"],
+            ]
+        }
+    }
+}

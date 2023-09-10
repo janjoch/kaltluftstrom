@@ -13,6 +13,21 @@
 1. Messung aktivieren: DIP-Schalter OFF/ON
 
 
+## GPS-Daten
+https://l.janjo.ch/wtdl-gps
+
+https://map.geo.admin.ch
+-> import gps.kml
+
+
+## Dateinamen
+W2.2-2_cleaned.csv
+* W2 => Standort und Typ (W: WTDL, S: SHT)
+* .2 => Sensor-ID, falls mehrere am Standort oder Ersatz aufgrund von Ausfall
+* -2 => Nummerierung, falls mehrere Files vorhanden
+* _cleaned => Bemerkung
+
+
 ## Protokoll
 
 05.07.2022 Inbetriebnahme WTDL1
@@ -45,3 +60,30 @@
 	* Siehe html_graphics/jump_responses_icewater.html
 	* Dafür Messrate 3 s.
 	* Danach INB wie gewohnt mit Messrate 3 min, Flash-Speicher gelöscht.
+
+
+16.04.2023
+* Auslesung W1 - W9
+
+
+bis 11.05.2023, 15:30
+* Montage der Sensoren W11-W62, ausser W35.1 und W35.2 (Pius Moser)
+
+
+bis 15.05.2023
+* Montage W35.1 und W35.2 auf Baum (Pius Moser)
+
+
+04.06.2023
+* Auslesung aller montierter Sensoren
+* ausser W35.1 / W25.2, da auf Baumkrone montiert
+* alle ausgelesenen Sensoren i.O.
+
+
+23.07.2023
+* Auslesung aller montierter Sensoren (WTDL und SHT)
+* ausser W35.1 / W25.2, da auf Baumkrone montiert
+* Auslesefehler bei W11, W42, W62
+  * Daten konnten grösstenteils wiederhergestellt werden:
+  * W42 und W62 komplett
+  * W11 Datenverlust zwischen 12.07.23 13:20 - 23.07.23 
