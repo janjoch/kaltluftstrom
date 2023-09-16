@@ -15,6 +15,7 @@ import json
 import types
 import datetime as dt
 from pathlib import Path
+from math import floor
 
 import numba as nb
 
@@ -199,62 +200,6 @@ class Base:
 
         else:
             return sensor_manual
-
-    def _plot_regression(
-        self,
-        fig,
-        ax,
-        x,
-        y,
-        plot_ci=True,
-        plot_pi=True,
-        color="#006BA4",
-        hatch=None,
-        legend_annex="",
-    ):
-        # regression analysis
-        # p, cov, y_model, t, resid, s_err,
-        #     chi2_red, n, m = self.regression(x, y)
-        reg = tb.arraytools.Regression(x, y)
-
-        # Fit
-        ax.plot(
-            reg.x,
-            reg.y_model,
-            "-",
-            color=tb.color.change_hex_brightness(color, 1.2),
-            linewidth=1.5,
-            alpha=0.5,
-            label="Regressionsgerade" + legend_annex,
-        )
-
-        # Confidence Interval
-        if plot_ci:
-            ax.fill_between(
-                reg.x2,
-                reg.y2 + reg.ci,
-                reg.y2 - reg.ci,
-                color=tb.color.change_hex_brightness(color, 1.2),
-                alpha=0.4,
-                hatch=hatch,
-                label="Konfidenzintervall 95%" + legend_annex,
-            )
-
-        # Prediction Interval
-        if plot_pi:
-            ax.plot(
-                reg.x2,
-                reg.y2 - reg.pi,
-                "--",
-                color=tb.color.change_hex_brightness(color, 1.5),
-                label="Vorhersagegrenze 95%" + legend_annex,
-            )
-            ax.plot(
-                reg.x2, reg.y2 + reg.pi, "--",
-                color=tb.color.change_hex_brightness(color, 1.5),
-            )
-
-        return fig, ax, reg
 
 
 class Timed(Base):
@@ -1041,18 +986,278 @@ class Binned(Base, tb.plot.NotebookInteraction):
             day_start=0,
         )
 
-    def average_day(
+    def daily(
         self,
-        day_start=0,
+        hour_start=0,
+        hour_end=24,
+        sensors=None,
     ):
         """to be finished..."""
-        bins_per_d = int(self.bins_per_h * 24)
-        days = int(self.bins / bins_per_d)
-        if day_start != 0:
-            days -= 1
+        sensors = (
+            self.binned.coords["sensor"]
+            if sensors is None
+            else list(sensors)
+        )
 
-        for i in range(days):
-            pass
+        bins_per_d = round(self.bins_per_h * 24)
+        days = int(self.bins / bins_per_d)
+        offset_start = floor(self.bins_per_h * hour_start)
+        offset_end = floor(self.bins_per_h * hour_end)
+        duration = offset_end - offset_start
+        days -= floor(hour_end / 24. - 0.001)
+
+        daily = np.empty((days, duration, len(sensors)))
+
+        for i_s, sensor in enumerate(sensors):
+            for day in range(days):
+                subset = self.binned["mean"].isel(
+                    timestamp=slice(
+                        day * bins_per_d + offset_start,
+                        day * bins_per_d + offset_end,
+                    )
+                ).sel(sensor=sensor).data
+
+                if not np.isnan(subset).any():
+                    daily[day, :, i_s] = subset
+                else:
+                    daily[day, :, i_s] = np.nan
+
+        date = [
+            self.earliest_date + dt.timedelta(days=day)
+            for day in range(days)
+        ]
+        hours = [
+            hour_start + (1. / self.bins_per_h) * i
+            for i in range(duration)
+        ]
+
+        dims = ["date", "hour", "sensor"]
+        daily_xr = xr.DataArray(
+            daily,
+            coords=dict(
+                date=date,
+                sensor=sensors,
+                hour=hours,
+            ),
+            dims=dims,
+        )
+
+        return Daily(
+            daily=daily_xr,
+            sensor_labels=self.sensor_labels,
+        )
+
+
+class Daily(Base, tb.plot.NotebookInteraction):
+    def __init__(
+        self,
+        daily,
+        sensor_labels=None,
+    ):
+        self.daily = daily
+        self.sensor_labels = sensor_labels
+
+    def process_validity(
+        self,
+        sensors,
+        filter_strict=False,
+        feedback=True,
+    ):
+        boolarray = np.isnan(self.daily)
+        if not filter_strict and sensors is not None:
+            boolarray = boolarray.sel(sensor=list(sensors))
+        self.valid_dates = ~boolarray.any(dim=("sensor", "hour"))
+        valid_daily = self.daily.sel(date=self.valid_dates)
+        valid_mean = valid_daily.mean(dim="date")
+
+        if feedback:
+            print(
+                "{} verwendbare Tage in einer Zeitspanne von {} Tagen".format(
+                    np.count_nonzero(self.valid_dates),
+                    len(self.valid_dates),
+                )
+            )
+
+        return valid_daily, valid_mean, self.valid_dates
+
+    @tb.plot.magic_plot
+    def plot(
+        self,
+        sensors=None,
+        locs=None,
+        wtdl=True,
+        sht=True,
+        filter_strict=False,
+        feedback=True,
+        fig=None,
+        **kwargs,
+    ):
+        """
+        Plot the daily temperatures.
+
+        Parameters
+        ----------
+        sensors: tuple, optional
+            Select sensors to plot.
+            Disables selection with locs, wtdl and sht.
+        locs: tuple, optional
+            Select locations to plot.
+            If set to None, all available locations will be plotted.
+            Default: None.
+        wtdl, sht: bool, optional
+            Display WTDL and SHT traces.
+            Default: True.
+        mode: str, optional
+            (mean, std, n)
+            Select whether to plot the mean, std or number of samples
+            in each bin.
+            Default: mean.
+        **kwargs
+            Keyword arguments for toolbox.plot.Plot.add_trace.
+        """
+        _, valid_mean, _ = self.process_validity(
+            sensors,
+            filter_strict=filter_strict,
+            feedback=feedback,
+        )
+        if sensors is None:
+            if wtdl and sht:
+                regex = r"[WS]"
+            elif wtdl:
+                regex = r"W"
+            elif sht:
+                regex = r"S"
+            else:
+                print("Warning: Neither WTDL nor SHT selected...")
+                regex = r""
+            if locs is None:
+                regex += r"[0-9]+"
+            else:
+                regex += "(" + "|".join([str(loc) for loc in locs]) + ")"
+
+        for name, series in valid_mean.to_pandas().items():
+            if (sensors is None and re.match(regex, name)) or (
+                sensors is not None and name in sensors
+            ):
+                fig.add_line(
+                    series,
+                    label=self.sensor_labels.get(name, name),
+                    **kwargs,
+                )
+
+    @tb.plot.magic_plot
+    def plot_sensor_core(
+        self,
+        sensor,
+        valid_daily,
+        valid_mean,
+        show_daily=True,
+        show_mean=True,
+        daily_color="grey",
+        daily_opacity=0.4,
+        mean_color=None,
+        fig=None,
+        **kwargs,
+    ):
+        if show_daily:
+            for date, series in valid_daily.sel(
+                sensor=sensor
+            ).to_pandas().iterrows():
+                fig.add_line(
+                    series,
+                    show_legend=False,
+                    color=daily_color,
+                    opacity=daily_opacity,
+                    **kwargs,
+                )
+
+        if show_mean:
+            fig.add_line(
+                valid_mean.sel(sensor=sensor).to_pandas(),
+                label=sensor,
+                color=mean_color,
+                **kwargs,
+            )
+
+    def plot_sensor(
+        self,
+        sensor,
+        filter_strict=False,
+        feedback=True,
+        **kwargs,
+    ):
+        # nan filtering
+        valid_daily, valid_mean, _ = self.process_validity(
+            (sensor,),
+            filter_strict=filter_strict,
+            feedback=feedback,
+        )
+
+        return self.plot_sensor_core(
+            sensor,
+            valid_daily=valid_daily,
+            valid_mean=valid_mean,
+            **kwargs,
+        )
+
+    def plot_sensors_grid(
+        self,
+        sensors,
+        filter_strict=False,
+        feedback=True,
+        show_daily=True,
+        show_mean=True,
+        daily_color="grey",
+        daily_opacity=0.4,
+        mean_color=None,
+        shared_xaxes="all",
+        shared_yaxes="all",
+        fig=None,
+        **kwargs,
+    ):
+        # input verification
+        if isinstance(sensors, (tuple, list)):
+            sensors = np.array((sensors,))
+        if isinstance(sensors, np.ndarray):
+            if len(sensors.shape) != 2:
+                raise ValueError("sensors numpy array must be 2D")
+            sensors = sensors
+            rows, cols = sensors.shape
+        else:
+            raise ValueError("sensors must be list, tuple or 2D numpy array")
+        if fig is None:
+            fig = tb.plot.Plot(
+                shared_xaxes=shared_xaxes,
+                shared_yaxes=shared_yaxes,
+                cols=cols,
+                rows=rows,
+                **kwargs,
+            )
+
+        # nan filtering
+        valid_daily, valid_mean, _ = self.process_validity(
+            sensors.flatten(),
+            filter_strict=filter_strict,
+            feedback=feedback,
+        )
+
+        # grid iteration
+        for i_row, sensors_row in enumerate(sensors):
+            for i_col, sensor in enumerate(sensors_row):
+                fig = self.plot_sensor_core(
+                    sensor,
+                    valid_daily=valid_daily,
+                    valid_mean=valid_mean,
+                    row=i_row,
+                    col=i_col,
+                    fig=fig,
+                    show_daily=show_daily,
+                    show_mean=show_mean,
+                    daily_color=daily_color,
+                    daily_opacity=daily_opacity,
+                    mean_color=mean_color,
+                )
+        return fig
 
 
 class Regression(tb.arraytools.LinearRegression, Base):
