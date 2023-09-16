@@ -1,4 +1,8 @@
+numba
 numpy
 matplotlib
 pandas
 plotly
+xarray
+scipy
+toolbox @ git+https://github.com/janjoch/toolbox@v0.2.1
