@@ -16,4 +16,5 @@
 * numpy
 * numba
 * pandas
+* plotly
 * [toolbox](https://l.janjo.ch/tb)
