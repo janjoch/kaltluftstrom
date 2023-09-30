@@ -1,0 +1,51 @@
+Bundesamt für Meteorologie und Klimatologie, MeteoSchweiz
+Operation Center 1
+Postfach 257
+8058 Zürich-Flughafen
+
+stn yyyyMMddHHmm
+
+stn Stationskürzel
+y   Jahr
+M   Monat
+d   Tag
+H   Stunde
+m   Minute
+
+Zeitangaben in UTC: 00:40 UTC = 02:40 Sommerzeit
+                              = 01:40 Winterzeit
+
+Zeitbezug bei Stundenwerten, sofern in der Parameterbeschreibung nicht anders vermerkt: HH  = (HH-1):01 - HH:00
+Beispiel: 13 = beinhaltet Messperiode von 12:01 bis 13:00 
+
+Fehlende Messwerte sind gekenntzeichnet mit '-'
+
+Qualitätsinformationen: Die Legende zu den Qualitätsinformationen ist zu finden unter: https://gate.meteoswiss.ch/idaweb/text/datenqualitaet_legende_de.pdf
+
+ 
+
+
+
+
+Stationen
+---------
+stn       Name                                 Parameter        Datenquelle                                        Länge/Breite             Koordinaten [km] Höhe ü. M. [m]
+LAE       Lägern                               dkl010z0         MeteoSchweiz                                       8°24'/47°29'             672250/259460    844
+LAE       Lägern                               fu3010z0         MeteoSchweiz                                       8°24'/47°29'             672250/259460    844
+LAE       Lägern                               gre000z0         MeteoSchweiz                                       8°24'/47°29'             672250/259460    844
+LAE       Lägern                               prestas0         MeteoSchweiz                                       8°24'/47°29'             672250/259460    844
+LAE       Lägern                               sre000z0         MeteoSchweiz                                       8°24'/47°29'             672250/259460    844
+LAE       Lägern                               tre200s0         MeteoSchweiz                                       8°24'/47°29'             672250/259460    844
+LAE       Lägern                               ure200s0         MeteoSchweiz                                       8°24'/47°29'             672250/259460    844
+
+Parameter
+---------
+          Einheit                              Beschreibung
+dkl010z0  °                                    Windrichtung; Zehnminutenmittel
+fu3010z0  km/h                                 Windgeschwindigkeit; Zehnminutenmittel
+gre000z0  W/m²                                 Globalstrahlung; Zehnminutenmittel
+prestas0  hPa                                  Luftdruck auf Barometerhöhe (QFE); Momentanwert
+sre000z0  min                                  Sonnenscheindauer; Zehnminutensumme
+tre200s0  °C                                   Lufttemperatur 2 m über Boden; Momentanwert
+ure200s0  %                                    Relative Luftfeuchtigkeit 2 m über Boden; Momentanwert
+

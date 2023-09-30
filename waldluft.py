@@ -12,7 +12,7 @@ V0.5.1
 
 import re
 import json
-import types
+from types import MappingProxyType
 import datetime as dt
 from pathlib import Path
 from math import floor
@@ -207,7 +207,7 @@ class Timed(Base):
         self,
         directory,
         feedback=True,
-        sensor_labels=types.MappingProxyType({}),
+        sensor_labels=MappingProxyType({}),
         import_locs=None,
         import_wtdl=True,
         import_sht=True,
@@ -707,6 +707,37 @@ class Timed(Base):
             title=title,
         )
         fig.show()
+
+
+def import_meteo_file(
+    directory,
+    filename,
+    encoding="UTF-8",
+):
+    data = pd.read_csv(
+        directory / filename,
+        delimiter=";",
+        encoding=encoding,
+    )
+    data.rename(columns={"tre200s0": "T"}, inplace=True)
+    data["timestamp"] = data["time"].apply(
+        _parse_meteo_datetime
+    )
+    data.set_index("timestamp", inplace=True)
+    return data
+
+
+def _parse_meteo_datetime(time_str):
+    """
+    Parse MeteoSwiss timestamps.
+
+    Input Format: 05.07.2022 22:53:15
+    Output Format datetime.datetime
+    """
+    return (
+        tb.datetimeparser.iso_tight(str(time_str), regex_t="")
+        + dt.timedelta(hours=2)
+    )
 
 
 class Binned(Base, tb.plot.NotebookInteraction):
