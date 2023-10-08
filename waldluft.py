@@ -740,6 +740,39 @@ def _parse_meteo_datetime(time_str):
     )
 
 
+def meteo_to_binned(
+    dataframe,
+    variables,
+    sensor_key,
+    sensor_label,
+    bins_per_h=6,
+):
+    coords = ["timestamp", "sensor"]
+
+    data_vars = {
+        key: (coords, np.expand_dims(np.array(dataframe[df_key]), 1))
+        for (key, df_key)
+        in variables.items()
+    }
+
+    ds = xr.Dataset(
+        data_vars=data_vars,
+        coords=dict(
+            timestamp=dataframe.index,
+            sensor=[sensor_key, ],
+        )
+    ).assign(n=lambda x: 0 * x["mean"] + 1)
+
+    return Binned(
+        ds,
+        {sensor_key: sensor_label},
+        len(dataframe),
+        bins_per_h,
+        dataframe.index[0].date(),
+        vars=list(variables.keys()),
+    )
+
+
 class Binned(Base, tb.plot.NotebookInteraction):
     def __init__(
         self,
@@ -748,12 +781,14 @@ class Binned(Base, tb.plot.NotebookInteraction):
         bins,
         bins_per_h,
         earliest_date,
+        vars=None,
     ):
         self.binned = binned
         self.sensor_labels = sensor_labels
         self.bins = bins
         self.bins_per_h = bins_per_h
         self.earliest_date = earliest_date
+        self.vars = ("mean",) if vars is None else vars
 
     @tb.plot.magic_plot
     def plot(
@@ -761,7 +796,9 @@ class Binned(Base, tb.plot.NotebookInteraction):
         locs=None,
         wtdl=True,
         sht=True,
+        plot_all=None,
         mode="mean",
+        label=None,
         fig=None,
         **kwargs,
     ):
@@ -786,25 +823,32 @@ class Binned(Base, tb.plot.NotebookInteraction):
             Keyword arguments for toolbox.plot.Plot.add_trace.
         """
         df = self.binned[mode].to_pandas()
-        if wtdl and sht:
-            regex = r"[WS]"
-        elif wtdl:
-            regex = r"W"
-        elif sht:
-            regex = r"S"
+        if wtdl and sht and plot_all is None:
+            plot_all = True
         else:
-            print("Warning: Neither WTDL nor SHT selected...")
-            regex = r""
-        if locs is None:
-            regex += r"[0-9]+"
-        else:
-            regex += "(" + "|".join([str(loc) for loc in locs]) + ")"
+            if wtdl and sht:
+                regex = r"[WS]"
+            elif wtdl:
+                regex = r"W"
+            elif sht:
+                regex = r"S"
+            else:
+                print("Warning: Neither WTDL nor SHT selected...")
+                regex = r""
+            if locs is None:
+                regex += r"[0-9]+"
+            else:
+                regex += "(" + "|".join([str(loc) for loc in locs]) + ")"
 
         for name, series in df.items():
-            if re.match(regex, name):
+            if plot_all or re.match(regex, name):
                 fig.add_line(
                     series,
-                    label=self.sensor_labels.get(name, name),
+                    label=(
+                        self.sensor_labels.get(name, name)
+                        if label is None
+                        else label
+                    ),
                     **kwargs,
                 )
 
@@ -813,16 +857,23 @@ class Binned(Base, tb.plot.NotebookInteraction):
         hours=(),
         bins=4,
         sensors=None,
+        vars=None,
     ):
         bins_per_d = int(self.bins_per_h * 24)
         days = int(self.bins / bins_per_d)
+        if vars is None:
+            vars = self.vars
 
         sensors = (
             self.binned.coords["sensor"]
             if sensors is None
             else list(sensors)
         )
-        mean = np.empty((days, len(sensors), len(hours)))
+        vars_mean = [
+            np.empty((days, len(sensors), len(hours)))
+            for _
+            in vars
+        ]
         n = np.empty((days, len(sensors), len(hours)), dtype=int)
 
         # iterate hour-frames, days and sensors
@@ -843,14 +894,16 @@ class Binned(Base, tb.plot.NotebookInteraction):
 
                     # if no data available
                     if n[day, i_s, i_h] <= 0:
-                        mean[day, i_s, i_h] = np.nan
+                        for i in range(len(vars)):
+                            vars_mean[i][day, i_s, i_h] = np.nan
 
                     else:
-                        mean[day, i_s, i_h] = float(
-                            (
-                                subset["mean"] * subset["n"]
-                            ).sum() / n[day, i_s, i_h]
-                        )
+                        for i, var_key in enumerate(vars):
+                            vars_mean[i][day, i_s, i_h] = float(
+                                (
+                                    subset[var_key] * subset["n"]
+                                ).sum() / n[day, i_s, i_h]
+                            )
 
         date = [
             self.earliest_date + dt.timedelta(days=day)
@@ -858,11 +911,14 @@ class Binned(Base, tb.plot.NotebookInteraction):
         ]
 
         coords = ["date", "sensor", "hour"]
+        data_vars = {
+            var_key: (coords, var_mean)
+            for (var_key, var_mean)
+            in zip(vars, vars_mean)
+        }
+        data_vars.update(dict(n=(coords, n)))
         framed = xr.Dataset(
-            data_vars=dict(
-                mean=(coords, mean),
-                n=(coords, n),
-            ),
+            data_vars=data_vars,
             coords=dict(
                 date=date,
                 sensor=sensors,
@@ -881,8 +937,9 @@ class Binned(Base, tb.plot.NotebookInteraction):
         group,
         hours=(),
         bins=4,
+        vars=None,
     ):
-        frame = self.frame(hours=hours, bins=bins, sensors=group)
+        frame = self.frame(hours=hours, bins=bins, sensors=group, vars=vars)
         mean = frame.data.mean(dim="sensor", skipna=False)
         return tb.plot.ShowDataset(
             mean,
@@ -894,8 +951,10 @@ class Binned(Base, tb.plot.NotebookInteraction):
         group,
         hour,
         bins=4,
+        vars=None,
     ):
-        frame = self.frame_groups(group=group, hours=(hour,), bins=bins)
+        frame = self.frame_groups(
+            group=group, hours=(hour,), bins=bins, vars=vars)
         mean = frame.data.mean(dim="hour", skipna=False)
         return tb.plot.ShowDataset(
             mean,
@@ -908,8 +967,10 @@ class Binned(Base, tb.plot.NotebookInteraction):
         hour_2,
         bins=4,
         sensors=None,
+        vars=vars,
     ):
-        frame = self.frame(hours=(hour_1, hour_2), bins=bins, sensors=sensors)
+        frame = self.frame(
+            hours=(hour_1, hour_2), bins=bins, sensors=sensors, vars=vars)
         delta = frame.data.sel(hour=hour_2) - frame.data.sel(hour=hour_1)
         return tb.plot.ShowDataset(
             delta,
