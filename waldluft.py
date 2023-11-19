@@ -1075,7 +1075,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
         return tb.plot.ShowDataset(
             min,
             default_var="min",
-            day_start=0,
+            # day_start=0,
         )
 
     def daily(
