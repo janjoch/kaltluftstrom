@@ -29,9 +29,14 @@ import plotly.graph_objects as go
 import plotly.express as px
 
 # get toolbox from https://github.com/janjoch/toolbox
-import toolbox as tb
+# import toolbox as tb
 
-if tb.plot.CALLED_FROM_NOTEBOOK:
+# get interplot from https://github.com/janjoch/interplot
+import interplot as ip
+
+import datetimeparser as dtp
+
+if ip.plot.CALLED_FROM_NOTEBOOK:
     from IPython.display import display, HTML
 
 """
@@ -374,7 +379,7 @@ class Timed(Base):
             self.timeseries[sensor]["T"].name = sensor
 
         if feedback:
-            if tb.plot.CALLED_FROM_NOTEBOOK:
+            if ip.plot.CALLED_FROM_NOTEBOOK:
                 display(HTML(self.sources._repr_html_()))
             else:
                 print(self.sources)
@@ -562,7 +567,7 @@ class Timed(Base):
             earliest_date,
         )
 
-    @tb.plot.magic_plot_preset(
+    @ip.plot.magic_plot_preset(
         xlabel="Datum/Zeit (MESZ)",
         ylabel="Temperatur / °C",
     )
@@ -735,7 +740,7 @@ def _parse_meteo_datetime(time_str):
     Output Format datetime.datetime
     """
     return (
-        tb.datetimeparser.iso_tight(str(time_str), regex_t="")
+        dtp.iso_tight(str(time_str), regex_t="")
         + dt.timedelta(hours=2)
     )
 
@@ -773,7 +778,7 @@ def meteo_to_binned(
     )
 
 
-class Binned(Base, tb.plot.NotebookInteraction):
+class Binned(Base, ip.plot.NotebookInteraction):
     def __init__(
         self,
         binned,
@@ -790,7 +795,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
         self.earliest_date = earliest_date
         self.vars = ("mean",) if vars is None else vars
 
-    @tb.plot.magic_plot
+    @ip.plot.magic_plot
     def plot(
         self,
         locs=None,
@@ -926,7 +931,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
             )
         )
 
-        return tb.plot.ShowDataset(
+        return ip.plot.ShowDataset(
             framed,
             default_var="mean",
             default_isel=dict(hour=0),
@@ -941,7 +946,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
     ):
         frame = self.frame(hours=hours, bins=bins, sensors=group, vars=vars)
         mean = frame.data.mean(dim="sensor", skipna=False)
-        return tb.plot.ShowDataset(
+        return ip.plot.ShowDataset(
             mean,
             default_var="mean",
         )
@@ -956,7 +961,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
         frame = self.frame_groups(
             group=group, hours=(hour,), bins=bins, vars=vars)
         mean = frame.data.mean(dim="hour", skipna=False)
-        return tb.plot.ShowDataset(
+        return ip.plot.ShowDataset(
             mean,
             default_var="mean",
         )
@@ -972,7 +977,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
         frame = self.frame(
             hours=(hour_1, hour_2), bins=bins, sensors=sensors, vars=vars)
         delta = frame.data.sel(hour=hour_2) - frame.data.sel(hour=hour_1)
-        return tb.plot.ShowDataset(
+        return ip.plot.ShowDataset(
             delta,
             default_var="mean",
         )
@@ -993,7 +998,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
             frame_groups.data.sel(hour=hour_2)
             - frame_groups.data.sel(hour=hour_1)
         )
-        return tb.plot.ShowDataset(
+        return ip.plot.ShowDataset(
             groups_delta,
             default_var="mean",
         )
@@ -1072,7 +1077,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
             )
         )
 
-        return tb.plot.ShowDataset(
+        return ip.plot.ShowDataset(
             min,
             default_var="min",
             # day_start=0,
@@ -1140,7 +1145,7 @@ class Binned(Base, tb.plot.NotebookInteraction):
         )
 
 
-class Daily(Base, tb.plot.NotebookInteraction):
+class Daily(Base, ip.plot.NotebookInteraction):
     def __init__(
         self,
         daily,
@@ -1172,7 +1177,7 @@ class Daily(Base, tb.plot.NotebookInteraction):
 
         return valid_daily, valid_mean, self.valid_dates
 
-    @tb.plot.magic_plot
+    @ip.plot.magic_plot
     def plot(
         self,
         sensors=None,
@@ -1237,7 +1242,7 @@ class Daily(Base, tb.plot.NotebookInteraction):
                     **kwargs,
                 )
 
-    @tb.plot.magic_plot
+    @ip.plot.magic_plot
     def plot_sensor_core(
         self,
         sensor,
@@ -1318,7 +1323,7 @@ class Daily(Base, tb.plot.NotebookInteraction):
         else:
             raise ValueError("sensors must be list, tuple or 2D numpy array")
         if fig is None:
-            fig = tb.plot.Plot(
+            fig = ip.plot.Plot(
                 shared_xaxes=shared_xaxes,
                 shared_yaxes=shared_yaxes,
                 cols=cols,
@@ -1352,7 +1357,7 @@ class Daily(Base, tb.plot.NotebookInteraction):
         return fig
 
 
-class Regression(tb.arraytools.LinearRegression, Base):
+class Regression(ip.arraytools.LinearRegression, Base):
     def __init__(
         self,
         x,
@@ -1360,12 +1365,12 @@ class Regression(tb.arraytools.LinearRegression, Base):
         filter_x_range=None,
     ):
         # convert to np.array
-        if isinstance(x, tb.plot.ShowDataset):
+        if isinstance(x, ip.plot.ShowDataset):
             index = x.data.coords["date"].data
             x = np.array(x.data["mean"])
         else:
             index = None
-        if isinstance(y, tb.plot.ShowDataset):
+        if isinstance(y, ip.plot.ShowDataset):
             y = np.array(y.data["mean"])
 
         filter = np.ones((5, x.size), dtype=bool)
