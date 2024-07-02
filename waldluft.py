@@ -827,6 +827,16 @@ class Binned(Base, ip.plot.NotebookInteraction):
         **kwargs
             Keyword arguments for toolbox.plot.Plot.add_trace.
         """
+        label_input = label
+        try:
+            fig.labels_used
+        except AttributeError:
+            fig.labels_used = []
+        try:
+            kwargs["kwargs_pty"]
+        except KeyError:
+            kwargs["kwargs_pty"] = {}
+
         df = self.binned[mode].to_pandas()
         if wtdl and sht and plot_all is None:
             plot_all = True
@@ -847,13 +857,22 @@ class Binned(Base, ip.plot.NotebookInteraction):
 
         for name, series in df.items():
             if plot_all or re.match(regex, name):
+                label = (
+                    self.sensor_labels.get(name, name)
+                    if label_input is None
+                    else label_input
+                )
+                kwargs["kwargs_pty"].update(dict(
+                    legendgroup=label,
+                ))
+                show_legend = label not in fig.labels_used
+                if label not in fig.labels_used:
+                    fig.labels_used.append(label)
                 fig.add_line(
                     series,
-                    label=(
-                        self.sensor_labels.get(name, name)
-                        if label is None
-                        else label
-                    ),
+                    color="C{}".format(fig.labels_used.index(label) % 10),
+                    label=label,
+                    show_legend=show_legend,
                     **kwargs,
                 )
 
