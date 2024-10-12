@@ -3,3 +3,4 @@ __pycache__/
 .ipynb_checkpoints/
 playground/
 .DS_Store
+raw_data/.DS_Store
