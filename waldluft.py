@@ -217,6 +217,7 @@ class Timed(Base):
         import_wtdl=True,
         import_sht=True,
         encoding="ansi",
+        custom_funcs=None,
     ):
         """
         Imports all files from a directory.
@@ -231,6 +232,12 @@ class Timed(Base):
             Tuple of ints.
         encoding: str, optional
             File encoding of WTDL .csv files.
+        custom_funcs: dict, optional
+            Custom functions for data post-processing.
+            Keys are sensor names (e.g. "W1", "S2", ...).
+            Values are functions with signature
+            func(dataframe: pd.DataFrame) -> pd.DataFrame
+            Key "__all__" will be applied to all sensors.
         """
         self.sensor_labels = sensor_labels
         self.timeseries = {}
@@ -314,23 +321,13 @@ class Timed(Base):
                 print(f"Warning: No file found for location {loc}")
                 continue
 
-            # self.timeseries["W" + str(loc)] = pd.concat([
-            #     self.import_wtdl_file(
-            #         directory,
-            #         row["filename"],  # filename
-            #         encoding,
-            #     )
-            #     self.sources.loc[index, "imported"] = True
-            #     for index, row
-            #     in files.iterrows()
-            # ]).sort_index()
-
             data = []
             for index, row in files.iterrows():
                 data.append(self.import_wtdl_file(
                     directory,
                     row["filename"],  # filename
                     encoding=encoding,
+                    custom_funcs=custom_funcs,
                 ))
                 self.sources.loc[index, "imported"] = True
             self.timeseries["W" + str(loc)] = pd.concat(data).sort_index()
@@ -385,7 +382,12 @@ class Timed(Base):
                 print(self.sources)
 
     @staticmethod
-    def import_wtdl_file(directory, filename, encoding="ansi"):
+    def import_wtdl_file(
+        directory,
+        filename,
+        encoding="ansi",
+        custom_funcs=None,
+    ):
         data = pd.read_csv(
             directory / filename,
             delimiter=";",
@@ -394,6 +396,11 @@ class Timed(Base):
         data.rename(columns={"Temperatur [°C]": "T"}, inplace=True)
         data["timestamp"] = data["Zeit [s]"].apply(Timed._parse_wtdl_datetime)
         data.set_index("timestamp", inplace=True)
+        if custom_funcs is not None:
+            if "__all__" in custom_funcs:
+                data = custom_funcs["__all__"](data)
+            if filename in custom_funcs:
+                data = custom_funcs[filename](data)
         return data
 
     @staticmethod
