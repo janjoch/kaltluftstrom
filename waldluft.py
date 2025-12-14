@@ -810,7 +810,6 @@ class Binned(Base, ip.plot.NotebookInteraction):
         sht=True,
         plot_all=None,
         mode="mean",
-        label=None,
         fig=None,
         **kwargs,
     ):
@@ -834,11 +833,6 @@ class Binned(Base, ip.plot.NotebookInteraction):
         **kwargs
             Keyword arguments for toolbox.plot.Plot.add_trace.
         """
-        label_input = label
-        try:
-            fig.labels_used
-        except AttributeError:
-            fig.labels_used = []
         try:
             kwargs["kwargs_pty"]
         except KeyError:
@@ -862,24 +856,16 @@ class Binned(Base, ip.plot.NotebookInteraction):
             else:
                 regex += "(" + "|".join([str(loc) for loc in locs]) + ")"
 
+
         for name, series in df.items():
             if plot_all or re.match(regex, name):
-                label = (
-                    self.sensor_labels.get(name, name)
-                    if label_input is None
-                    else label_input
-                )
-                kwargs["kwargs_pty"].update(dict(
-                    legendgroup=label,
-                ))
-                show_legend = label not in fig.labels_used
-                if label not in fig.labels_used:
-                    fig.labels_used.append(label)
+                label = self.sensor_labels[name]
+                if callable(label):
+                    label = label()
                 fig.add_line(
                     series,
-                    color="C{}".format(fig.labels_used.index(label) % 10),
+                    color=int(name[1:])-1,
                     label=label,
-                    show_legend=show_legend,
                     **kwargs,
                 )
 
